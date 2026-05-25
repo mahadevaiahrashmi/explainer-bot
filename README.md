@@ -1,0 +1,274 @@
+# Explainer Bot
+
+Turn rough points into a narrated explainer video — recorded **in your own
+voice**. Inspired by the [3Blue1Brown](https://www.youtube.com/watch?v=jx6FevmKJGg)
+style: short slides, vivid analogies, a genuine sense of wonder.
+
+It runs in two stages:
+
+```
+  rough points ─► script + critique ─► cue video + script.txt
+                                              │
+                          (you record audio for each slide,
+                           drop the files into the audio/ folder)
+                                              │
+                                              ▼
+                                        final video.mp4
+```
+
+Both stages are available from a **web UI** and a **terminal UI**.
+All Claude calls go through your **Claude Code subscription** — no
+`ANTHROPIC_API_KEY` needed.
+
+---
+
+## For non-technical readers
+
+### What does it do?
+
+You type a few rough points about an idea you want to explain. About a minute
+later you get back:
+- A draft script — broken into slide-sized chunks of narration.
+- A critique of the script from an AI reviewer who checks that the script is
+  understandable to a first-year CS undergrad, uses good analogies, and has a
+  sense of wonder.
+- A chance to edit anything before slides are built.
+
+Once you approve the script, the bot designs slides for each chunk and
+assembles them into a **silent "cue" video** — basically a slideshow with no
+audio. It also gives you a printable **script.txt** that tells you, for each
+slide, how long to talk and exactly what to say.
+
+You then **record your own voice** — one audio file per slide
+(`slide_00.wav`, `slide_01.wav`, …) — and drop those files into the audio
+folder the bot shows you. The bot stitches everything together: each slide
+stays on screen for exactly as long as your recording for it, and the final
+output is an MP4 you can play or share.
+
+### Why not have the bot speak it?
+
+You can have *a* computer voice narrate it (the previous version of this
+tool used the macOS `say` voice), but real videos in this style — like
+3Blue1Brown's — work because there's a *human* voice with curiosity and
+pauses behind them. Recording yourself, even just on a phone, sounds
+dramatically better than synthesised speech.
+
+### What does it cost?
+
+Nothing per video, beyond the Claude Code subscription you already have.
+The bot uses the `claude` CLI under the hood, so the script-writing,
+critique, and slide-design calls count against your normal subscription
+allowance, not a paid API account.
+
+---
+
+## For technical readers
+
+### Architecture
+
+```
+┌──────────────┐  rough_points      ┌────────────────────────────────────┐
+│  Web chat /  │ ─────────────────► │  POST /script                      │
+│  TUI (cli.py)│                    │   └─► pipeline.draft_script        │
+│              │ ◄── script ─────── │        ├─► claude WRITER           │
+│              │     critique       │        ├─► claude AESTHETIC        │
+│              │     aesthetic      │        └─► claude CRITIC           │
+│  user edits  │                    │                                    │
+│  + approves  │                    │                                    │
+│              │  segments          │  POST /cue (async background task) │
+│              │ ─────────────────► │   └─► pipeline.build_cue           │
+│              │                    │        ├─► claude SLIDE × N        │
+│              │                    │        ├─► playwright PNG × N      │
+│              │                    │        ├─► ffmpeg silent clip × N  │
+│              │                    │        └─► concat → cue_video.mp4  │
+│              │ ◄── cue_video.mp4 ─┤            + script.txt            │
+│              │     script.txt     │            + plan.json (persisted) │
+│              │                    │                                    │
+│  user records audio                                                     │
+│  files locally and uploads ──►   │  POST /jobs/{id}/audio              │
+│  (web)  or  drops in audio/ ──►  │  (or just save into audio/ for TUI) │
+│                                                                         │
+│              │ click finalize  │  POST /jobs/{id}/finalize             │
+│              │ ──────────────► │   └─► pipeline.build_final            │
+│              │                  │        ├─► ffprobe each user audio   │
+│              │                  │        ├─► ffmpeg per-slide clip × N │
+│              │                  │        │   (image + audio, len=audio)│
+│              │                  │        └─► concat → video.mp4        │
+│              │ ◄── video.mp4 ─── │  GET  /jobs/{id}/video              │
+└──────────────┘                   └────────────────────────────────────┘
+```
+
+### Components
+
+| File                  | What it does                                                       |
+| --------------------- | ------------------------------------------------------------------ |
+| `pipeline.py`         | Pure-Python pipeline. Two entry points: `build_cue`, `build_final`.|
+| `app.py`              | FastAPI — serves the chat UI and the `/script`, `/cue`, `/jobs/*/audio`, `/jobs/*/finalize` endpoints. |
+| `cli.py`              | Interactive terminal UI with the same flow as the web UI.          |
+| `prompts.py`          | System prompts: writer, critic, slide-designer, aesthetic-picker.  |
+| `templates/chat.html` | Single-page chat UI (vanilla JS, no build step).                   |
+| `smoke_test.py`       | Drives both pipeline stages end-to-end (uses `say` as stand-in audio). |
+| `jobs/{id}/`          | Per-job directory: `plan.json`, `slides/`, `audio/`, `work/`, `cue_video.mp4`, `script.txt`, `video.mp4`. |
+
+### Why two stages?
+
+The previous version of this tool synthesised narration with macOS `say`
+and burned it straight into the video. That works, but synthetic narration
+is the single biggest quality drop in an otherwise-decent video.
+
+Splitting the build at the audio boundary means:
+- The script and slide design are *cheap and re-runnable* — they only cost
+  Claude calls.
+- Your voice is the only input the final assembly needs. You can re-record
+  one slide without redoing anything else (just drop a new
+  `slide_NN.<ext>` into the audio folder and re-finalize).
+- The cue video itself is silent and uses estimated durations (160 wpm
+  default) so you can preview the visuals before recording.
+
+### Why the `claude` CLI instead of the Anthropic SDK?
+
+The Anthropic Python SDK calls `api.anthropic.com` and bills per token
+against an API key. The `claude` binary shipped with [Claude Code](https://docs.claude.com/en/docs/claude-code/overview)
+authenticates against the user's Claude.ai / Claude Max subscription, so each
+call counts against the subscription's allowance instead. For a tool that
+makes ~3–6 model calls per video, the CLI's extra startup latency (~2s per
+call) is acceptable, and the user pays nothing extra. Swap in the SDK by
+editing the single `pipeline.claude()` function.
+
+### Slide rendering
+
+Each segment becomes one standalone HTML document at 1920×1080 with no
+external assets (no remote fonts, no remote images). Playwright loads it via
+`page.set_content` and screenshots it — deterministic and offline.
+
+### Audio handling
+
+We accept `.wav`, `.mp3`, `.m4a`, `.aac`, `.aiff`, `.flac`, `.ogg`, and
+`.opus`. Filename must start with `slide_NN` (zero-padded slide index).
+The per-slide clip's duration is `ffprobe`'d from the audio file, so the
+slide stays on screen for exactly as long as your recording. Final
+assembly is one ffmpeg pass per slide (image + audio + scale to 1920×1080)
+then a single concat — no libass / `subtitles=` filter, so it works with
+Homebrew's stock ffmpeg.
+
+### Job model
+
+`JOBS` is an in-process dict keyed by a random 10-hex `job_id`. On disk we
+also persist `jobs/{id}/plan.json` so `build_final` can be called from a
+fresh process (e.g. from `cli.py --resume <id>`).
+
+---
+
+## User manual
+
+### One-time setup
+
+You need macOS, Homebrew, and Claude Code installed and logged in.
+
+```bash
+brew install ffmpeg
+cd content
+uv venv --python 3.11
+uv sync
+.venv/bin/playwright install chromium
+```
+
+Verify the `claude` CLI is reachable:
+
+```bash
+claude -p "say hello"
+```
+
+### Web UI
+
+```bash
+cd content
+.venv/bin/uvicorn app:app --reload --port 8000
+```
+
+Open <http://localhost:8000> and:
+
+1. **Type rough points** → "Draft script."
+2. **Review the script + critique.** Edit any title / visual / narration in
+   place. Click **"Approve & build cue video."**
+3. **Cue video appears.** Watch it, download it, download `script.txt`.
+4. **Record one audio file per slide** (`slide_00.wav`, `slide_01.wav`, …) —
+   any common audio format (.wav, .mp3, .m4a, .aiff, …).
+5. **Drag-drop the files** onto the upload area. The status table shows
+   which slides have audio. You can remove and re-upload one slide at a time.
+6. When all slides are green, click **"Build final video."** A few seconds
+   later the MP4 is playable and downloadable in-page.
+
+### Terminal UI
+
+```bash
+cd content
+.venv/bin/python cli.py
+```
+
+Same flow, but:
+- Multi-line input ends with a single `.` on its own line.
+- Approve / edit / redraft is keyboard-driven.
+- "Edit in editor" opens the script in `$EDITOR` as a Markdown file with
+  one section per slide.
+- After the cue is built, the bot prints the audio folder path and waits.
+  Record your files, save them into that folder, hit `r` to rescan.
+  When all are present, hit `f` to finalize.
+- Resume an existing job: `.venv/bin/python cli.py --resume <job_id>`
+  jumps straight to the audio stage.
+
+### Files you get per job
+
+After `build_cue` runs you have:
+
+```
+jobs/<job_id>/
+├── plan.json              # the approved script (used by build_final)
+├── slides/                # slide HTML + PNG screenshots
+├── audio/                 # drop your slide_NN.wav files here
+├── work/                  # ffmpeg intermediate files
+├── cue_video.mp4          # silent slideshow, estimated durations
+└── script.txt             # per-slide narration + timestamps + filename to record
+```
+
+After `build_final` runs you also get `jobs/<job_id>/video.mp4`.
+
+### Re-recording a single slide
+
+Just replace the file in `jobs/<job_id>/audio/` (delete the old one if the
+extension changes) and run finalize again — in the web UI, the table has a
+"Remove" button per slide; in the CLI, drop in a new file and hit `f`.
+
+### Smoke test
+
+Stand-in test that runs end-to-end without you having to actually record:
+
+```bash
+cd content
+.venv/bin/python smoke_test.py
+```
+
+It uses `say` as a placeholder voice so the test runs unattended. A real
+session would skip step `[3/4]` and use your own recordings instead.
+
+### Troubleshooting
+
+- **"claude CLI timed out"** — `claude -p "hi"` probably hangs at the auth
+  prompt. Run `claude` once interactively to log in, then retry.
+- **Slide content too low / runs off the screen** — regenerate the slide,
+  or edit `key_visual` to be more specific ("centered in the frame", "three
+  labeled circles in a row") and re-approve.
+- **"missing audio file for slide N"** — filenames must start with
+  `slide_NN` (zero-padded). The audio dir is shown in both UIs.
+- **Final video plays but slides are too long / short** — that's just the
+  audio length. Re-record that slide more tightly and re-finalize.
+
+### Cost / quota
+
+Each video uses roughly:
+- 1 writer call (~2 k output tokens)
+- 1 aesthetic-picker call (~200 tokens)
+- 1 critic call (~500 tokens)
+- N slide-design calls (~1 k tokens each), one per segment
+
+All routed through your Claude Code subscription. No API key is charged.

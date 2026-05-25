@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Explainer Bot</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --panel-2: #1f2630;
+    --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+    --good: #3fb950; --warn: #d29922; --bad: #f85149;
+    --border: #30363d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  header {
+    padding: 16px 24px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 12px;
+  }
+  header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px; }
+  .stage { display: none; }
+  .stage.active { display: block; }
+  label { display: block; color: var(--muted); font-size: 13px; margin-bottom: 6px; }
+  textarea, input[type="text"] {
+    width: 100%; padding: 12px; resize: vertical;
+    background: var(--panel); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; font: inherit;
+  }
+  textarea { min-height: 180px; }
+  button {
+    background: var(--accent); color: #0d1117; border: 0; padding: 10px 18px;
+    border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 14px;
+  }
+  button.secondary { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); }
+  button.danger { background: var(--bad); color: white; }
+  button:disabled { opacity: 0.5; cursor: wait; }
+  .row { display: flex; gap: 10px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-top: 16px; }
+  .panel h3 { margin: 0 0 10px; font-size: 15px; }
+  .scores { display: flex; gap: 16px; flex-wrap: wrap; }
+  .score { background: var(--panel-2); border-radius: 6px; padding: 8px 12px; }
+  .score b { color: var(--accent); }
+  .verdict { display: inline-block; padding: 3px 9px; border-radius: 4px; font-size: 12px; margin-left: 8px; }
+  .verdict.approve { background: rgba(63,185,80,0.18); color: var(--good); }
+  .verdict.revise  { background: rgba(210,153,34,0.18); color: var(--warn); }
+  .segment {
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px; margin-top: 10px;
+  }
+  .segment .title-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .segment textarea {
+    width: 100%; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 8px;
+    font: inherit; resize: vertical; min-height: 70px; margin-top: 6px;
+  }
+  .segment input[type="text"] {
+    background: var(--bg);
+  }
+  .progress {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px; font-family: ui-monospace, SF Mono, Menlo, monospace;
+    font-size: 13px; max-height: 200px; overflow-y: auto; white-space: pre-wrap;
+  }
+  ul.notes { margin: 6px 0 0 18px; padding: 0; }
+  ul.notes li { margin: 4px 0; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .error { color: var(--bad); }
+  video { width: 100%; border-radius: 8px; margin-top: 12px; background: black; }
+  .aesthetic-swatch { display: inline-block; width: 18px; height: 18px; border-radius: 3px; border: 1px solid var(--border); vertical-align: middle; margin-right: 4px; }
+  table.audio { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  table.audio th, table.audio td {
+    text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  table.audio th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; }
+  .pill.ok { background: rgba(63,185,80,0.18); color: var(--good); }
+  .pill.missing { background: rgba(248,81,73,0.18); color: var(--bad); }
+  .file-drop {
+    border: 2px dashed var(--border); border-radius: 10px; padding: 24px;
+    text-align: center; color: var(--muted); cursor: pointer;
+    transition: background 0.1s, border-color 0.1s;
+  }
+  .file-drop:hover, .file-drop.drag {
+    background: var(--panel-2); border-color: var(--accent); color: var(--text);
+  }
+  pre.script {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px; font-family: ui-monospace, SF Mono, Menlo, monospace;
+    font-size: 12px; max-height: 320px; overflow: auto;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Explainer Bot</h1>
+  <span class="sub">rough points → script → cue video → your voice → final video</span>
+</header>
+<main>
+
+  <!-- Stage 1: input -->
+  <section id="stage-input" class="stage active">
+    <label for="rough">Give me rough points or a thought to explain.</label>
+    <textarea id="rough" placeholder="e.g. how a neural network learns, what entropy actually is, why sorting algorithms differ..."></textarea>
+    <div class="row">
+      <button id="btn-script">Draft script</button>
+      <span class="muted" id="input-hint">Claude will write a narration, pick a slide aesthetic, and critique its own work (~30–60s).</span>
+    </div>
+  </section>
+
+  <!-- Stage 2: review script -->
+  <section id="stage-review" class="stage">
+    <div class="panel">
+      <h3>Slide aesthetic <span class="muted" id="aesthetic-name"></span></h3>
+      <div id="aesthetic-desc" class="muted"></div>
+      <div id="aesthetic-palette" style="margin-top:8px;"></div>
+    </div>
+
+    <div class="panel">
+      <h3>Reviewer critique <span id="verdict-badge" class="verdict"></span></h3>
+      <div class="scores" id="scores"></div>
+      <ul class="notes" id="notes"></ul>
+    </div>
+
+    <div class="panel">
+      <h3>Script — edit any field before building the cue video</h3>
+      <div id="segments"></div>
+    </div>
+
+    <div class="row">
+      <button id="btn-cue">Approve & build cue video</button>
+      <button class="secondary" id="btn-back-input">← Rewrite from rough points</button>
+    </div>
+  </section>
+
+  <!-- Stage 3: cue ready, waiting for audio uploads -->
+  <section id="stage-record" class="stage">
+    <div class="panel">
+      <h3>Cue video <span class="muted" id="cue-job"></span></h3>
+      <div class="progress" id="cue-progress"></div>
+      <video id="cue-video" controls style="display:none;"></video>
+      <div class="row" id="cue-actions" style="display:none;">
+        <a id="cue-download" download><button class="secondary">Download cue video</button></a>
+        <a id="script-download" download><button class="secondary">Download script.txt</button></a>
+      </div>
+    </div>
+
+    <div class="panel" id="script-panel" style="display:none;">
+      <h3>Script — read each slide into a separate audio file</h3>
+      <pre class="script" id="script-text"></pre>
+    </div>
+
+    <div class="panel" id="upload-panel" style="display:none;">
+      <h3>Upload your recordings</h3>
+      <div class="muted">
+        Drop your audio files here. Filenames must start with <code>slide_00</code>,
+        <code>slide_01</code>, etc. (any audio extension — .wav, .mp3, .m4a, .aiff, …).
+      </div>
+      <div class="file-drop" id="drop">
+        Drop audio files here, or click to choose.
+        <input type="file" id="file-input" multiple accept="audio/*" style="display:none;" />
+      </div>
+      <table class="audio" id="audio-table"></table>
+      <div class="row">
+        <button id="btn-finalize" disabled>Build final video</button>
+        <button class="secondary" id="btn-back-review">← Back to script</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Stage 4: final video -->
+  <section id="stage-final" class="stage">
+    <div class="panel">
+      <h3>Building final video <span class="muted" id="final-job"></span></h3>
+      <div class="progress" id="final-progress"></div>
+    </div>
+    <div class="panel" id="final-panel" style="display:none;">
+      <h3>Final video</h3>
+      <video id="final-video" controls></video>
+      <div class="row">
+        <a id="final-download" download><button>Download MP4</button></a>
+        <button class="secondary" id="btn-restart">Make another</button>
+      </div>
+    </div>
+    <div class="panel error" id="final-error" style="display:none;"></div>
+  </section>
+
+</main>
+
+<script>
+const $ = (sel) => document.querySelector(sel);
+const STAGES = ["stage-input", "stage-review", "stage-record", "stage-final"];
+function show(stageId) {
+  for (const s of STAGES) document.getElementById(s).classList.toggle("active", s === stageId);
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+let SCRIPT = null;  // {topic, aesthetic, segments, critique}
+let JOB_ID = null;
+
+// ------------------------------------------------------------------ stage 1
+$("#btn-script").addEventListener("click", async () => {
+  const rough = $("#rough").value.trim();
+  if (!rough) { alert("Type some rough points first."); return; }
+  const btn = $("#btn-script"); btn.disabled = true;
+  $("#input-hint").textContent = "Drafting... 30–60s.";
+  try {
+    const res = await fetch("/script", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ rough_points: rough })
+    });
+    if (!res.ok) throw new Error(await res.text());
+    SCRIPT = await res.json();
+    renderReview();
+    show("stage-review");
+  } catch (e) {
+    alert("Script generation failed:\n" + e.message);
+  } finally {
+    btn.disabled = false;
+    $("#input-hint").textContent = "";
+  }
+});
+
+// ------------------------------------------------------------------ stage 2
+function renderReview() {
+  $("#aesthetic-name").textContent = "— " + SCRIPT.aesthetic.name;
+  $("#aesthetic-desc").textContent = SCRIPT.aesthetic.description;
+  const pal = $("#aesthetic-palette"); pal.innerHTML = "";
+  for (const c of SCRIPT.aesthetic.palette) {
+    const sw = document.createElement("span");
+    sw.className = "aesthetic-swatch";
+    sw.style.background = c; sw.title = c; pal.appendChild(sw);
+  }
+  const c = SCRIPT.critique;
+  const v = $("#verdict-badge");
+  v.textContent = c.verdict;
+  v.className = "verdict " + (c.verdict === "approve" ? "approve" : "revise");
+  const sc = $("#scores"); sc.innerHTML = "";
+  for (const [k, val] of Object.entries(c.scores)) {
+    const d = document.createElement("div"); d.className = "score";
+    d.innerHTML = `${k}: <b>${val}/5</b>`;
+    sc.appendChild(d);
+  }
+  const nl = $("#notes"); nl.innerHTML = "";
+  for (const n of c.notes) {
+    const li = document.createElement("li"); li.textContent = n; nl.appendChild(li);
+  }
+  const segs = $("#segments"); segs.innerHTML = "";
+  SCRIPT.segments.forEach((s, i) => {
+    const div = document.createElement("div"); div.className = "segment";
+    div.innerHTML = `
+      <div class="title-row">
+        <strong>${i + 1}.</strong>
+        <input type="text" data-i="${i}" data-k="title" value="${escapeHtml(s.title)}" />
+      </div>
+      <textarea data-i="${i}" data-k="key_visual" placeholder="Key visual">${escapeHtml(s.key_visual)}</textarea>
+      <textarea data-i="${i}" data-k="narration" placeholder="Narration">${escapeHtml(s.narration)}</textarea>
+    `;
+    segs.appendChild(div);
+  });
+  segs.oninput = (e) => {
+    const t = e.target;
+    if (!t.dataset || t.dataset.i == null) return;
+    SCRIPT.segments[+t.dataset.i][t.dataset.k] = t.value;
+  };
+}
+
+$("#btn-back-input").addEventListener("click", () => show("stage-input"));
+
+// ------------------------------------------------------------------ stage 3
+$("#btn-cue").addEventListener("click", async () => {
+  const btn = $("#btn-cue"); btn.disabled = true;
+  try {
+    const res = await fetch("/cue", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        topic: SCRIPT.topic, aesthetic: SCRIPT.aesthetic, segments: SCRIPT.segments
+      })
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const { job_id } = await res.json();
+    JOB_ID = job_id;
+    $("#cue-job").textContent = "(job " + job_id + ")";
+    $("#cue-progress").textContent = "Starting...\n";
+    $("#cue-video").style.display = "none";
+    $("#cue-actions").style.display = "none";
+    $("#script-panel").style.display = "none";
+    $("#upload-panel").style.display = "none";
+    show("stage-record");
+    pollCue();
+  } catch (e) {
+    alert("Cue build failed to start:\n" + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$("#btn-back-review").addEventListener("click", () => show("stage-review"));
+
+async function pollCue() {
+  while (true) {
+    await new Promise(r => setTimeout(r, 1500));
+    const r = await fetch(`/jobs/${JOB_ID}/status`);
+    const j = await r.json();
+    $("#cue-progress").textContent = j.progress.join("\n");
+    if (j.stage === "cue" && j.status === "done") {
+      $("#cue-video").src = `/jobs/${JOB_ID}/cue`;
+      $("#cue-video").style.display = "block";
+      $("#cue-download").href = `/jobs/${JOB_ID}/cue`;
+      $("#script-download").href = `/jobs/${JOB_ID}/script`;
+      $("#cue-actions").style.display = "flex";
+      $("#script-panel").style.display = "block";
+      $("#upload-panel").style.display = "block";
+      const scriptText = await (await fetch(`/jobs/${JOB_ID}/script`)).text();
+      $("#script-text").textContent = scriptText;
+      renderAudioTable(j.audio);
+      return;
+    }
+    if (j.status === "error") {
+      $("#cue-progress").textContent += "\n\nError: " + (j.error || "(unknown)");
+      return;
+    }
+  }
+}
+
+function renderAudioTable(audio) {
+  const t = $("#audio-table");
+  if (!audio) { t.innerHTML = ""; return; }
+  let html = "<tr><th>#</th><th>Slide title</th><th>Expected filename</th><th>Status</th><th></th></tr>";
+  for (const s of audio.slides) {
+    const status = s.have_audio
+      ? `<span class="pill ok">${s.audio_filename}${s.audio_duration_s ? ` — ${s.audio_duration_s.toFixed(1)}s` : ""}</span>`
+      : `<span class="pill missing">missing</span>`;
+    const del = s.have_audio
+      ? `<button class="danger" data-del-audio="${s.index}">Remove</button>`
+      : "";
+    html += `<tr>
+      <td>${s.index + 1}</td>
+      <td>${escapeHtml(s.title)}</td>
+      <td><code>${s.expected_filename_stem}.&lt;ext&gt;</code></td>
+      <td>${status}</td>
+      <td>${del}</td>
+    </tr>`;
+  }
+  t.innerHTML = html;
+  $("#btn-finalize").disabled = !audio.all_present;
+  t.querySelectorAll("[data-del-audio]").forEach(btn => {
+    btn.onclick = async () => {
+      const idx = btn.getAttribute("data-del-audio");
+      await fetch(`/jobs/${JOB_ID}/audio/${idx}`, { method: "DELETE" });
+      refreshAudio();
+    };
+  });
+}
+
+async function refreshAudio() {
+  const r = await fetch(`/jobs/${JOB_ID}/status`);
+  const j = await r.json();
+  renderAudioTable(j.audio);
+}
+
+// File drop
+const drop = $("#drop");
+const fileInput = $("#file-input");
+drop.addEventListener("click", () => fileInput.click());
+drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("drag"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("drag"));
+drop.addEventListener("drop", async (e) => {
+  e.preventDefault(); drop.classList.remove("drag");
+  await uploadFiles(e.dataTransfer.files);
+});
+fileInput.addEventListener("change", async () => {
+  await uploadFiles(fileInput.files);
+  fileInput.value = "";
+});
+
+async function uploadFiles(files) {
+  if (!files || !files.length) return;
+  const form = new FormData();
+  for (const f of files) form.append("files", f, f.name);
+  drop.textContent = "Uploading...";
+  try {
+    const r = await fetch(`/jobs/${JOB_ID}/audio`, { method: "POST", body: form });
+    if (!r.ok) throw new Error(await r.text());
+    const data = await r.json();
+    renderAudioTable(data.audio);
+  } catch (e) {
+    alert("Upload failed:\n" + e.message);
+  } finally {
+    drop.textContent = "Drop audio files here, or click to choose.";
+  }
+}
+
+// ------------------------------------------------------------------ stage 4
+$("#btn-finalize").addEventListener("click", async () => {
+  const btn = $("#btn-finalize"); btn.disabled = true;
+  try {
+    const res = await fetch(`/jobs/${JOB_ID}/finalize`, { method: "POST" });
+    if (!res.ok) throw new Error(await res.text());
+    $("#final-job").textContent = "(job " + JOB_ID + ")";
+    $("#final-progress").textContent = "Starting...\n";
+    $("#final-panel").style.display = "none";
+    $("#final-error").style.display = "none";
+    show("stage-final");
+    pollFinal();
+  } catch (e) {
+    alert("Finalize failed to start:\n" + e.message);
+    btn.disabled = false;
+  }
+});
+
+async function pollFinal() {
+  while (true) {
+    await new Promise(r => setTimeout(r, 1500));
+    const r = await fetch(`/jobs/${JOB_ID}/status`);
+    const j = await r.json();
+    $("#final-progress").textContent = j.progress.join("\n");
+    if (j.stage === "final" && j.status === "done") {
+      $("#final-video").src = `/jobs/${JOB_ID}/video`;
+      $("#final-download").href = `/jobs/${JOB_ID}/video`;
+      $("#final-panel").style.display = "block";
+      return;
+    }
+    if (j.status === "error") {
+      $("#final-error").style.display = "block";
+      $("#final-error").textContent = "Error: " + (j.error || "(unknown)");
+      return;
+    }
+  }
+}
+
+$("#btn-restart").addEventListener("click", () => {
+  $("#rough").value = "";
+  SCRIPT = null; JOB_ID = null;
+  show("stage-input");
+});
+</script>
+</body>
+</html>

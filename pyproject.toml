@@ -1,0 +1,16 @@
+[project]
+name = "content"
+version = "0.1.0"
+description = "Chatbot that turns rough points into a narrated explainer video"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "jinja2>=3.1",
+    "playwright>=1.49",
+    "pydantic>=2.9",
+    "python-multipart>=0.0.20",
+]
+
+[tool.uv]
+package = false
