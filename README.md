@@ -22,6 +22,33 @@ All Claude calls go through your **Claude Code subscription** — no
 
 ---
 
+## Tech stack
+
+| Layer                | Choice                                    | Why                                                                                          |
+| -------------------- | ----------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Language             | **Python 3.11**                           | One language for pipeline, server, and CLI. 3.10+ for modern typing (`X \| Y`, `dict[str, …]`). |
+| Package manager      | **uv**                                    | Fast resolver, lockfile, isolated venv in one tool.                                          |
+| Web framework        | **FastAPI** + **Uvicorn**                 | Async-native, zero-boilerplate JSON I/O, runs the long-poll endpoints comfortably.           |
+| Request validation   | **Pydantic v2**                           | Schema for every request/response; built into FastAPI.                                       |
+| File uploads         | **python-multipart**                      | FastAPI's required dep for `multipart/form-data`; used for per-slide audio uploads.          |
+| Web UI               | **Vanilla HTML + CSS + JS** (no build)    | Single `templates/chat.html`; deliberately no React/bundler — keeps the surface area small.  |
+| Terminal UI          | **stdlib only** (`argparse`, ANSI colours, `subprocess` to `$EDITOR`) | No `rich`/`textual` dep; the TUI is a thin, dependency-free wrapper around the pipeline. |
+| LLM                  | **Claude** via the local **`claude` CLI** | Routes every model call through the user's Claude Code subscription — no API key, no per-call cost. Swappable: replace `pipeline.claude()` to switch backends. |
+| Slide rendering      | **Playwright** + **Chromium (headless)**  | Claude writes standalone HTML; the browser screenshots it. Deterministic and offline.        |
+| Voice (optional)     | **macOS `say`**                           | Built-in TTS for the auto-narrate fallback. No cloud TTS bills; primary flow is user-recorded human voice. |
+| Video assembly       | **ffmpeg** + **ffprobe**                  | Per-slide clip (image + audio) → concat → MP4. No libass / `subtitles=` filter, so stock Homebrew ffmpeg works. |
+| Output format        | **MP4** (H.264 video, AAC stereo audio)   | Universal playback; 1920×1080 @ 30 fps.                                                       |
+| Persistence          | **Plain files** under `jobs/<id>/`        | `plan.json`, slide HTML/PNG, audio, cue/final MP4. No database; the disk layout *is* the state model. |
+| Process model        | In-process async tasks + on-disk handoff  | `asyncio.create_task` for background work; resumable across server restarts because state is on disk. |
+| Dev tooling          | **uv**, **smoke_test.py**                 | `smoke_test.py` drives both pipeline stages end-to-end (uses `say` as stand-in voice) to verify changes. |
+
+External requirements: macOS, Homebrew, ffmpeg, Claude Code (for the
+`claude` CLI). Everything else installs via `uv sync` + `playwright
+install chromium`. Full dependency table including auth/runtime
+requirements lives in [SYSTEM_DESIGN.md §7](SYSTEM_DESIGN.md#7-external-dependencies).
+
+---
+
 ## For non-technical readers
 
 ### What does it do?
