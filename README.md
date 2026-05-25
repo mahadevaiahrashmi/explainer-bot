@@ -104,10 +104,12 @@ allowance, not a paid API account.
 
 ## For technical readers
 
-> Looking for the full architectural reference — components, API
-> contracts, sequence diagrams, decision log? See
-> **[SYSTEM_DESIGN.md](SYSTEM_DESIGN.md)**. This section is the quick
-> overview.
+> - Full architectural reference (components, API contracts, sequence
+>   diagrams, decision log) → **[SYSTEM_DESIGN.md](SYSTEM_DESIGN.md)**.
+> - Testing strategy, UAT checklist, and bug-reporting workflow →
+>   **[TESTING.md](TESTING.md)**.
+>
+> This section is the quick overview.
 
 ### Architecture
 
@@ -240,7 +242,11 @@ Open <http://localhost:8000> and:
    tab; on the left you see the raw HTML in an editable textarea, on the
    right a live iframe preview that updates as you type. Click
    **"Re-render this slide"** to save the edit and refresh the PNG;
-   **"Revert to bot's version"** to throw away unsaved edits. Click
+   **"Revert to bot's version"** to throw away unsaved edits. If the
+   slide has a problem you can describe in words (overlapping text, the
+   diagram in the wrong place, an unreadable label), click **"Report
+   issue / ask bot to fix"**, describe the issue, and the bot will
+   rewrite that slide's HTML — no need to edit by hand. Click
    **"Build cue video"** when all slides look right.
 4. **Cue video appears.** Watch it, download it, download `script.txt`.
 5. **Record one audio file per slide** (`slide_00.wav`, `slide_01.wav`, …) —

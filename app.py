@@ -25,6 +25,7 @@ from pipeline import (
     design_slides,
     draft_script,
     find_audio_for_slide,
+    fix_slide,
     get_slide_html,
     screenshot_slides,
     update_slide_html,
@@ -166,6 +167,36 @@ async def get_slide_png(job_id: str, index: int) -> FileResponse:
         raise HTTPException(404, "slide PNG not found — call PUT html first")
     # ?t= cache-buster handled by the client.
     return FileResponse(p, media_type="image/png")
+
+
+class FixBody(BaseModel):
+    issue: str
+    rerender: bool = True
+
+
+@app.post("/jobs/{job_id}/slide/{index}/fix")
+async def post_slide_fix(job_id: str, index: int, body: FixBody) -> dict[str, Any]:
+    """Ask Claude to fix a reported issue with this slide.
+
+    Body: { issue: "title overlaps the diagram", rerender: true }
+    Returns the new HTML so the editor can refresh.
+    """
+    if not body.issue.strip():
+        raise HTTPException(400, "issue cannot be empty")
+    try:
+        new_html = await fix_slide(job_id, index, body.issue)
+    except (FileNotFoundError, IndexError, ValueError) as e:
+        raise HTTPException(400 if isinstance(e, (ValueError, IndexError)) else 404, str(e))
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(500, f"slide fix failed: {e}")
+    if body.rerender:
+        try:
+            await screenshot_slides(job_id, indices=[index])
+        except Exception as e:
+            traceback.print_exc()
+            raise HTTPException(500, f"re-screenshot after fix failed: {e}")
+    return {"html": new_html, "rerendered": body.rerender}
 
 
 @app.post("/jobs/{job_id}/render-cue")

@@ -1,0 +1,49 @@
+name: Script quality — the writing is bad
+description: The narration is unclear, missing analogies, or feels flat — and a re-draft didn't help.
+title: "[quality] "
+labels: ["quality"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Quality issues usually point to a prompt problem (`prompts.py`). Give us
+        enough context to reproduce the bad output and we can iterate on the
+        prompt.
+  - type: textarea
+    id: rough_points
+    attributes:
+      label: Rough points
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: bad_output
+    attributes:
+      label: What the bot produced
+      description: Paste the segments JSON (or just the offending narration paragraphs) from `POST /script`.
+      render: json
+    validations:
+      required: true
+  - type: dropdown
+    id: which_criterion
+    attributes:
+      label: Which criterion is failing?
+      multiple: true
+      options:
+        - Understandability (jargon, leaps of logic, hard to follow)
+        - Analogies (missing or misleading)
+        - Wonder (reads like a textbook, no curiosity)
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: ideal
+    attributes:
+      label: What would a good version look like?
+      description: A sentence or two showing the style/tone you wanted. Helps us tune the prompt.
+  - type: textarea
+    id: critique
+    attributes:
+      label: The bot's own critique (if any)
+      description: Did the critic flag the same problem you saw? If yes, paste the `critique` object. If no, that's interesting — say so.
+      render: json

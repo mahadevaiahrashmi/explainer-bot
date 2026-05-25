@@ -1,0 +1,59 @@
+name: Visual issue — a slide consistently looks wrong
+description: Use ONLY if "Report issue / ask bot to fix" inside the app didn't help after 2-3 tries. Otherwise fix it in-app.
+title: "[visual] "
+labels: ["visual"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > **Stop.** Most visual issues are fixed inside the bot, not on GitHub.
+        > In the *Slides* stage, click **"Report issue / ask bot to fix"** and
+        > describe the problem. See [TESTING.md §1](../blob/main/TESTING.md#1-reporting-visual-problems).
+        >
+        > Only file this issue if the bot's fix *consistently* fails on the same
+        > kind of problem (e.g. text always overflows on a specific aesthetic,
+        > every slide of a particular layout has the title overlapping).
+  - type: textarea
+    id: rough_points
+    attributes:
+      label: Rough points that produced this slide
+      description: We need to reproduce it.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: slide_index
+    attributes:
+      label: Slide number
+      description: 1-based.
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What's wrong?
+      description: Be specific about *what* and *where*. "Title overlaps the diagram on the left" beats "looks bad".
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: What did you ask the bot to fix?
+      description: Paste the exact issue text(s) you sent through the "ask bot to fix" button, in order.
+    validations:
+      required: true
+  - type: textarea
+    id: bad_html
+    attributes:
+      label: The bad HTML
+      description: Paste the contents of `jobs/<job_id>/slides/slide_NN.html` (the version that still has the problem after the bot's attempts).
+      render: html
+    validations:
+      required: true
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: Screenshot
+      description: Drag the bad PNG (`jobs/<job_id>/slides/slide_NN.png`) into this box.
+    validations:
+      required: true

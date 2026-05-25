@@ -1,0 +1,84 @@
+name: Bug — something broke
+description: Pipeline failed, an endpoint 500'd, a stage didn't complete, or the final MP4 is corrupt.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing. Before submitting, please make sure this is a code
+        bug — if a slide just *looks* wrong, try the in-app **"Report issue /
+        ask bot to fix"** button first. See [TESTING.md §1](../blob/main/TESTING.md#1-reporting-visual-problems).
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Which stage failed?
+      options:
+        - Script (POST /script)
+        - Slide design (POST /design)
+        - Slide edit (PUT /slide html, POST /slide fix)
+        - Cue build (POST /render-cue or /cue)
+        - Audio (upload, auto-narrate)
+        - Final video (POST /finalize)
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which interface?
+      options:
+        - Web UI
+        - Terminal UI (cli.py)
+        - Direct pipeline.* call
+    validations:
+      required: true
+  - type: textarea
+    id: input
+    attributes:
+      label: Input
+      description: The rough points you typed, or the exact CLI command you ran.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What actually happened?
+      description: Error message, stack trace, screenshot, or attach the bad MP4. The `progress` list from `GET /jobs/{id}/status` is gold here.
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: Paste the output of the snippet below.
+      value: |
+        ```
+        $ claude --version
+        $ ffmpeg -version | head -1
+        $ .venv/bin/python -c "import playwright, fastapi, sys; print(sys.version)"
+        ```
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: job_id
+    attributes:
+      label: Job ID (if you have one)
+      description: From `jobs/<job_id>/`. If you can attach a zip of that folder it makes reproduction much easier.
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Sanity checks
+      options:
+        - label: I reproduced this at least once on a fresh run.
+          required: true
+        - label: This is not a visual slide problem fixable by the in-app "ask bot to fix" feature.
+          required: true

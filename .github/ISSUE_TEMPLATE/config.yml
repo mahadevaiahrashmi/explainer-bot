@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Visual issue — try the in-app fix first
+    url: https://github.com/mahadevaiahrashmi/explainer-bot/blob/main/TESTING.md#1-reporting-visual-problems
+    about: Slide looks wrong? Most visual issues are fixed inside the bot with "Report issue / ask bot to fix" — read this before filing.
+  - name: Bug-report workflow
+    url: https://github.com/mahadevaiahrashmi/explainer-bot/blob/main/TESTING.md#5-bug-reporting-workflow
+    about: What to include in a bug report so we can act on it.

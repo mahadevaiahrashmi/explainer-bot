@@ -30,6 +30,7 @@ from pipeline import (
     build_final,
     design_slides,
     draft_script,
+    fix_slide,
     screenshot_slides,
 )
 
@@ -233,7 +234,8 @@ async def run_first_time() -> str:
 
 
 def edit_slides_loop(job_id: str, html_paths: list[Path]) -> None:
-    """Let the user edit any slide HTML in $EDITOR before screenshots are taken.
+    """Let the user edit any slide HTML in $EDITOR (or have the bot fix it)
+    before screenshots are taken.
 
     NOTE: Not async; the user is sitting in front of the prompt, no concurrency.
     """
@@ -244,9 +246,10 @@ def edit_slides_loop(job_id: str, html_paths: list[Path]) -> None:
             print(f"  {i + 1}. {p}  {C.DIM}({size} bytes){C.RESET}")
         try:
             choice = input(
-                f"\n{C.BOLD}[1..{len(html_paths)}]{C.RESET} edit slide   "
-                f"{C.BOLD}[d]{C.RESET}one (build cue video)   "
+                f"\n{C.BOLD}[1..{len(html_paths)}]{C.RESET} edit slide in $EDITOR   "
+                f"{C.BOLD}[f N]{C.RESET} ask bot to fix slide N   "
                 f"{C.BOLD}[o]{C.RESET}pen slides folder   "
+                f"{C.BOLD}[d]{C.RESET}one (build cue video)   "
                 f"{C.BOLD}[q]{C.RESET}uit: "
             ).strip().lower()
         except EOFError:
@@ -258,6 +261,38 @@ def edit_slides_loop(job_id: str, html_paths: list[Path]) -> None:
         if choice == "o":
             subprocess.run(["open", str(html_paths[0].parent)])
             continue
+        if choice.startswith("f"):
+            rest = choice[1:].strip()
+            if not rest.isdigit():
+                warn("Usage: f <slide number>, e.g. `f 2`")
+                continue
+            idx = int(rest) - 1
+            if not 0 <= idx < len(html_paths):
+                warn(f"Slide number must be between 1 and {len(html_paths)}.")
+                continue
+            print(f"\nDescribe the issue with slide {idx + 1} in plain English.")
+            print(f"{C.DIM}Examples: 'title overlaps the diagram', 'text runs off the right edge',")
+            print(f"          'second label unreadable on dark bg'. End with a single dot (.) on its own line.{C.RESET}")
+            buf: list[str] = []
+            while True:
+                try:
+                    ln = input()
+                except EOFError:
+                    break
+                if ln.strip() == ".":
+                    break
+                buf.append(ln)
+            issue = "\n".join(buf).strip()
+            if not issue:
+                warn("Empty issue — skipping.")
+                continue
+            hr(f"asking bot to fix slide {idx + 1}")
+            try:
+                asyncio.run(_fix_and_rerender(job_id, idx, issue))
+                good(f"Slide {idx + 1} fixed and re-rendered.")
+            except Exception as e:
+                err(f"Fix failed: {e}")
+            continue
         if choice.isdigit():
             idx = int(choice) - 1
             if 0 <= idx < len(html_paths):
@@ -265,6 +300,13 @@ def edit_slides_loop(job_id: str, html_paths: list[Path]) -> None:
                 subprocess.run([editor, str(html_paths[idx])])
                 continue
         warn("Not a valid choice.")
+
+
+async def _fix_and_rerender(job_id: str, index: int, issue: str) -> None:
+    """Helper: call fix_slide then screenshot that slide."""
+    await fix_slide(job_id, index, issue)
+    await screenshot_slides(job_id, indices=[index],
+                            progress_cb=progress_printer)
 
 
 def wait_for_audio_loop(job_id: str) -> None:

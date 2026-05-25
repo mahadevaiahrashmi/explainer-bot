@@ -43,6 +43,7 @@ from prompts import (
     AESTHETIC_PICKER_PROMPT,
     CRITIC_PROMPT,
     SLIDE_DESIGNER_PROMPT,
+    SLIDE_FIXER_PROMPT,
     WRITER_PROMPT,
 )
 
@@ -465,6 +466,47 @@ def update_slide_html(job_id: str, index: int, html: str) -> Path:
     p = _slide_html_path(job_dir, index)
     p.write_text(html)
     return p
+
+
+async def fix_slide(job_id: str, index: int, issue: str) -> str:
+    """Ask Claude to fix a reported visual issue in one slide and return new HTML.
+
+    The new HTML is written to disk by this function (so callers don't have to
+    remember to call `update_slide_html` themselves). Caller is still
+    responsible for re-screenshotting via `screenshot_slides([index])`.
+    """
+    issue = issue.strip()
+    if not issue:
+        raise ValueError("issue description cannot be empty")
+    job_dir = _job_dir(job_id)
+    if not (job_dir / "plan.json").exists():
+        raise FileNotFoundError(f"no plan for job {job_id}")
+    _, aesthetic, segments = _load_plan(job_dir)
+    if not 0 <= index < len(segments):
+        raise IndexError(f"slide index {index} out of range (0..{len(segments) - 1})")
+    segment = segments[index]
+    current_html = get_slide_html(job_id, index)
+
+    user_message = textwrap.dedent(
+        f"""
+        SLIDE TITLE: {segment.title}
+        KEY_VISUAL:  {segment.key_visual}
+
+        CHOSEN AESTHETIC:
+        {_aesthetic_brief(aesthetic)}
+
+        USER ISSUE:
+        {issue}
+
+        CURRENT HTML:
+        {current_html}
+
+        Produce the corrected HTML now.
+        """
+    ).strip()
+    new_html = _strip_fences(await claude(SLIDE_FIXER_PROMPT, user_message))
+    _slide_html_path(job_dir, index).write_text(new_html)
+    return new_html
 
 
 async def screenshot_slides(

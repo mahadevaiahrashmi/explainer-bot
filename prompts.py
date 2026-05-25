@@ -74,6 +74,35 @@ Produce a single self-contained HTML document with inline CSS that:
 Output ONLY the HTML, starting with <!doctype html>, no markdown fences, no commentary.
 """
 
+SLIDE_FIXER_PROMPT = """You are fixing a single slide of an explainer video. The user has
+reported a specific problem with how the slide looks. Produce a corrected version of the
+HTML that addresses the reported issue while preserving everything that already works.
+
+The user message will contain:
+  - The slide TITLE and KEY_VISUAL description (the original brief)
+  - The CHOSEN AESTHETIC for the video
+  - The CURRENT HTML of the slide
+  - The USER ISSUE — a short plain-language description of what's wrong
+        (e.g. "the title overlaps the diagram", "text runs off the right edge",
+         "the second label is unreadable on the dark background")
+
+Rules:
+  - Output a single self-contained HTML document, exactly the same shape as the original:
+        <!doctype html>...<body style="width:1920px;height:1080px;margin:0;overflow:hidden;position:relative">
+    Content must fit inside 1920×1080.
+  - Address the reported issue specifically. If the issue is "text overlaps", actually
+    move or resize the offending elements — don't just nudge them by 5 px.
+  - Preserve the existing aesthetic, palette, fonts, and overall structure unless the
+    issue requires changing them. The viewer should recognise this as the same slide.
+  - Do NOT include any narration text on the slide (the audio is separate).
+  - Use NO external assets (no Google Fonts, no CDN scripts, no remote images). System
+    fonts only.
+  - High contrast, large type, readable at video resolution.
+
+Output ONLY the corrected HTML, starting with <!doctype html>, no markdown fences,
+no commentary, no explanation. The HTML is what gets rendered.
+"""
+
 AESTHETIC_PICKER_PROMPT = """Given a topic for an explainer video, pick ONE visual aesthetic
 that fits the subject matter, and describe it in 2-3 sentences so a slide designer can
 apply it consistently across every slide.
