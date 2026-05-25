@@ -18,6 +18,7 @@ from pipeline import (
     JOBS_DIR,
     Segment,
     audio_status,
+    auto_narrate,
     build_cue,
     build_final,
     draft_script,
@@ -190,6 +191,22 @@ async def delete_audio(job_id: str, index: int) -> dict[str, Any]:
         raise HTTPException(404, "no audio for that slide")
     p.unlink()
     return {"deleted": p.name, "audio": audio_status(job_id)}
+
+
+@app.post("/jobs/{job_id}/auto-narrate")
+async def post_auto_narrate(
+    job_id: str, overwrite: bool = False
+) -> dict[str, Any]:
+    """Fill in missing slide audio (or replace all if overwrite=true) with `say`."""
+    if job_id not in JOBS:
+        raise HTTPException(404, "unknown job")
+    try:
+        # Off-thread so we don't block the event loop while `say` runs.
+        written = await asyncio.to_thread(auto_narrate, job_id, overwrite)
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(500, f"auto-narrate failed: {e}")
+    return {"written": [p.name for p in written], "audio": audio_status(job_id)}
 
 
 @app.post("/jobs/{job_id}/finalize")

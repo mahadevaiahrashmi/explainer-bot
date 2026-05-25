@@ -25,6 +25,7 @@ from pipeline import (
     JOBS_DIR,
     Segment,
     audio_status,
+    auto_narrate,
     build_cue,
     build_final,
     draft_script,
@@ -238,6 +239,7 @@ def wait_for_audio_loop(job_id: str) -> None:
             choice = input(
                 f"{C.BOLD}[f]{C.RESET}inalize   "
                 f"{C.BOLD}[o]{C.RESET}pen audio folder   "
+                f"{C.BOLD}[a]{C.RESET}uto-narrate all (overwrite)   "
                 f"{C.BOLD}[r]{C.RESET}escan   "
                 f"{C.BOLD}[q]{C.RESET}uit: "
             ).strip().lower()
@@ -246,8 +248,10 @@ def wait_for_audio_loop(job_id: str) -> None:
             print(f"{C.DIM}Each file must start with `slide_NN` "
                   f"(e.g. slide_00.wav, slide_01.m4a).{C.RESET}")
             choice = input(
-                f"{C.BOLD}[r]{C.RESET}escan   "
+                f"{C.BOLD}[n]{C.RESET}arrate missing with `say`   "
+                f"{C.BOLD}[a]{C.RESET}uto-narrate all (overwrite)   "
                 f"{C.BOLD}[o]{C.RESET}pen audio folder   "
+                f"{C.BOLD}[r]{C.RESET}escan   "
                 f"{C.BOLD}[q]{C.RESET}uit: "
             ).strip().lower()
         if choice == "o":
@@ -256,6 +260,13 @@ def wait_for_audio_loop(job_id: str) -> None:
             sys.exit(0)
         elif choice == "f" and st["all_present"]:
             return
+        elif choice == "n":
+            hr("auto-narrating missing slides")
+            auto_narrate(job_id, overwrite=False, progress_cb=progress_printer)
+        elif choice == "a":
+            if ask("This replaces every slide's audio. Continue?", default="n").startswith("y"):
+                hr("auto-narrating all slides")
+                auto_narrate(job_id, overwrite=True, progress_cb=progress_printer)
         # any other key (or 'r') -> rescan
 
 
@@ -272,6 +283,9 @@ async def amain() -> None:
     ap = argparse.ArgumentParser(description="Explainer Bot — terminal UI")
     ap.add_argument("--resume", metavar="JOB_ID",
                     help="Skip drafting; go straight to audio status for an existing job")
+    ap.add_argument("--auto-narrate", action="store_true",
+                    help="Skip the audio-recording wait; auto-narrate any missing slides "
+                         "with macOS `say` and finalize immediately.")
     args = ap.parse_args()
 
     if args.resume:
@@ -283,7 +297,12 @@ async def amain() -> None:
     else:
         job_id = await run_first_time()
 
-    wait_for_audio_loop(job_id)
+    if args.auto_narrate:
+        hr("auto-narrating missing slides")
+        auto_narrate(job_id, overwrite=False, progress_cb=progress_printer)
+    else:
+        wait_for_audio_loop(job_id)
+
     await run_finalize(job_id)
 
 

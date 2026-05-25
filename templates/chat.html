@@ -164,6 +164,15 @@
         Drop audio files here, or click to choose.
         <input type="file" id="file-input" multiple accept="audio/*" style="display:none;" />
       </div>
+      <div class="row" style="margin-top:6px;">
+        <button class="secondary" id="btn-auto-fill" title="Synthesise missing slides with macOS `say`">
+          Auto-narrate missing slides
+        </button>
+        <button class="secondary" id="btn-auto-all" title="Overwrite ALL slides with synthesised narration">
+          Auto-narrate everything (overwrite)
+        </button>
+        <span class="muted">— uses macOS <code>say</code>; your recordings always take precedence unless you click "overwrite".</span>
+      </div>
       <table class="audio" id="audio-table"></table>
       <div class="row">
         <button id="btn-finalize" disabled>Build final video</button>
@@ -396,6 +405,30 @@ async function uploadFiles(files) {
     drop.textContent = "Drop audio files here, or click to choose.";
   }
 }
+
+async function autoNarrate(overwrite) {
+  if (overwrite && !confirm("This will replace every slide's audio, including any recordings you uploaded. Continue?")) return;
+  const btnFill = $("#btn-auto-fill"), btnAll = $("#btn-auto-all");
+  btnFill.disabled = btnAll.disabled = true;
+  const original = overwrite ? btnAll.textContent : btnFill.textContent;
+  const target = overwrite ? btnAll : btnFill;
+  target.textContent = "Synthesising...";
+  try {
+    const r = await fetch(`/jobs/${JOB_ID}/auto-narrate?overwrite=${overwrite ? "true" : "false"}`,
+                          { method: "POST" });
+    if (!r.ok) throw new Error(await r.text());
+    const data = await r.json();
+    renderAudioTable(data.audio);
+  } catch (e) {
+    alert("Auto-narrate failed:\n" + e.message);
+  } finally {
+    target.textContent = original;
+    btnFill.disabled = btnAll.disabled = false;
+  }
+}
+
+$("#btn-auto-fill").addEventListener("click", () => autoNarrate(false));
+$("#btn-auto-all").addEventListener("click", () => autoNarrate(true));
 
 // ------------------------------------------------------------------ stage 4
 $("#btn-finalize").addEventListener("click", async () => {

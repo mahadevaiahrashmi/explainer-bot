@@ -45,13 +45,20 @@ folder the bot shows you. The bot stitches everything together: each slide
 stays on screen for exactly as long as your recording for it, and the final
 output is an MP4 you can play or share.
 
-### Why not have the bot speak it?
+### Can the bot speak it for me?
 
-You can have *a* computer voice narrate it (the previous version of this
-tool used the macOS `say` voice), but real videos in this style — like
-3Blue1Brown's — work because there's a *human* voice with curiosity and
-pauses behind them. Recording yourself, even just on a phone, sounds
-dramatically better than synthesised speech.
+Yes — at the audio step you can click **"Auto-narrate missing slides"**
+(or in the CLI, hit `n`) and macOS's built-in `say` voice will fill in any
+slide you haven't recorded yourself. There's also **"Auto-narrate
+everything (overwrite)"** that replaces *all* slide audio with synthesised
+narration in one click, plus a `python cli.py --auto-narrate` flag for
+fully unattended end-to-end runs.
+
+That said, real videos in this style — like 3Blue1Brown's — work because
+there's a *human* voice with curiosity and pauses behind them. Recording
+yourself, even just on a phone, sounds dramatically better than synthesised
+speech. The auto-narrate option is mostly useful for previewing the final
+shape of the video before you decide which slides to re-record.
 
 ### What does it cost?
 
@@ -199,6 +206,11 @@ Open <http://localhost:8000> and:
 6. When all slides are green, click **"Build final video."** A few seconds
    later the MP4 is playable and downloadable in-page.
 
+If you want to skip recording entirely (or just preview the video before
+committing to a take), click **"Auto-narrate missing slides"** — macOS
+`say` will fill in any slide you don't have a recording for. Use
+**"Auto-narrate everything (overwrite)"** to replace all slides at once.
+
 ### Terminal UI
 
 ```bash
@@ -216,6 +228,11 @@ Same flow, but:
   When all are present, hit `f` to finalize.
 - Resume an existing job: `.venv/bin/python cli.py --resume <job_id>`
   jumps straight to the audio stage.
+- Skip recording entirely: `.venv/bin/python cli.py --auto-narrate` runs
+  end-to-end with macOS `say` filling in every slide. Combine with
+  `--resume` to auto-narrate an existing job in one command.
+- At the audio prompt, `n` synthesises any missing slides with `say`; `a`
+  replaces every slide's audio with synthesis (asks first).
 
 ### Files you get per job
 

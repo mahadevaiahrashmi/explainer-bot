@@ -1,8 +1,9 @@
-"""End-to-end pipeline: rough points -> cue video -> user audio -> final video.
+"""End-to-end pipeline: rough points -> cue video -> audio -> final video.
 
 External dependencies (must be on PATH):
   - claude       (Claude Code CLI; uses your subscription, no API key)
   - ffmpeg / ffprobe
+  - say          (macOS built-in TTS, used by auto-narrate only)
 And the playwright python package + chromium browser.
 
 The pipeline runs in two stages:
@@ -13,10 +14,15 @@ The pipeline runs in two stages:
                             telling the user exactly what to read into each
                             ``slide_NN.wav`` file.
 
-  Stage 2  ``build_final`` : take the user's per-slide audio recordings and
-                             assemble the final narrated video. Each slide's
-                             duration is set to the duration of its audio
-                             file, so the user's pacing controls the video.
+  Stage 2  ``build_final`` : take the per-slide audio recordings and assemble
+                             the final narrated video. Each slide's duration
+                             is set to the duration of its audio file. Audio
+                             can come from one of two sources, interchangeably:
+                               * the user records and drops files into the
+                                 ``jobs/<id>/audio/`` folder, OR
+                               * ``auto_narrate`` synthesises them with macOS
+                                 ``say`` for the slides that don't already
+                                 have user-supplied audio.
 """
 from __future__ import annotations
 
@@ -460,6 +466,8 @@ async def build_cue(
 # ---------------------------------------------------------------------------
 
 _AUDIO_EXTS = (".wav", ".mp3", ".m4a", ".aac", ".aiff", ".aif", ".flac", ".ogg", ".opus")
+SAY_VOICE = "Samantha"
+SAY_RATE_WPM = 175
 
 
 def find_audio_for_slide(audio_dir: Path, index: int) -> Path | None:
@@ -469,6 +477,48 @@ def find_audio_for_slide(audio_dir: Path, index: int) -> Path | None:
         if p.is_file() and p.stem == stem and p.suffix.lower() in _AUDIO_EXTS:
             return p
     return None
+
+
+def auto_narrate(
+    job_id: str,
+    overwrite: bool = False,
+    progress_cb=None,
+) -> list[Path]:
+    """Generate audio for the job with macOS ``say``.
+
+    Writes one ``slide_NN.aiff`` per segment into ``jobs/<id>/audio/``.
+
+    By default we skip any slide that already has user-provided audio, so
+    a user can hand-record a few slides and let the bot fill the rest.
+    Set ``overwrite=True`` to replace every slide's audio (the user's
+    recordings are deleted in that case).
+    """
+    job_dir = _job_dir(job_id)
+    if not (job_dir / "plan.json").exists():
+        raise FileNotFoundError(f"no plan for job {job_id}")
+    _, _, segments = _load_plan(job_dir)
+    audio_dir = job_dir / "audio"
+    audio_dir.mkdir(exist_ok=True)
+
+    written: list[Path] = []
+    for i, seg in enumerate(segments):
+        existing = find_audio_for_slide(audio_dir, i)
+        if existing is not None and not overwrite:
+            if progress_cb:
+                progress_cb(f"slide {i + 1}: keeping existing {existing.name}")
+            continue
+        if existing is not None and overwrite:
+            existing.unlink()
+        out = audio_dir / f"slide_{i:02d}.aiff"
+        subprocess.run(
+            ["say", "-v", SAY_VOICE, "-r", str(SAY_RATE_WPM),
+             "-o", str(out), seg.narration],
+            check=True,
+        )
+        written.append(out)
+        if progress_cb:
+            progress_cb(f"slide {i + 1}: synthesised {out.name}")
+    return written
 
 
 def audio_status(job_id: str) -> dict[str, Any]:
