@@ -71,6 +71,11 @@ allowance, not a paid API account.
 
 ## For technical readers
 
+> Looking for the full architectural reference — components, API
+> contracts, sequence diagrams, decision log? See
+> **[SYSTEM_DESIGN.md](SYSTEM_DESIGN.md)**. This section is the quick
+> overview.
+
 ### Architecture
 
 ```
