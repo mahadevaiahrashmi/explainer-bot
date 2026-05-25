@@ -93,12 +93,38 @@
     padding: 12px; font-family: ui-monospace, SF Mono, Menlo, monospace;
     font-size: 12px; max-height: 320px; overflow: auto;
   }
+  .slide-tabs {
+    display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0;
+    border-bottom: 1px solid var(--border); padding-bottom: 10px;
+  }
+  .slide-tabs button {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    padding: 6px 12px; border-radius: 4px; font-size: 13px; cursor: pointer;
+    font-weight: 400;
+  }
+  .slide-tabs button.active { background: var(--accent); color: #0d1117; border-color: var(--accent); font-weight: 600; }
+  .slide-tabs button .pip-dirty { color: var(--warn); margin-left: 4px; }
+  .slide-editor {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 12px;
+  }
+  @media (max-width: 900px) { .slide-editor { grid-template-columns: 1fr; } }
+  textarea#slide-html {
+    width: 100%; min-height: 480px; resize: vertical;
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 10px;
+    font: 12px/1.45 ui-monospace, SF Mono, Menlo, monospace;
+    white-space: pre; tab-size: 2;
+  }
+  iframe#slide-iframe {
+    width: 100%; aspect-ratio: 16/9; border: 1px solid var(--border);
+    border-radius: 6px; background: white;
+  }
 </style>
 </head>
 <body>
 <header>
   <h1>Explainer Bot</h1>
-  <span class="sub">rough points → script → cue video → your voice → final video</span>
+  <span class="sub">rough points → script → slide HTML → cue video → your voice → final video</span>
 </header>
 <main>
 
@@ -132,8 +158,50 @@
     </div>
 
     <div class="row">
-      <button id="btn-cue">Approve & build cue video</button>
+      <button id="btn-design">Approve script → design slides</button>
       <button class="secondary" id="btn-back-input">← Rewrite from rough points</button>
+      <span class="muted" id="design-hint">Claude will write standalone HTML for each slide (~30–60s). You can edit any slide before the cue video is built.</span>
+    </div>
+  </section>
+
+  <!-- Stage 2.5: review / edit slide HTML -->
+  <section id="stage-slides" class="stage">
+    <div class="panel">
+      <h3>Slides — preview, edit HTML, re-render</h3>
+      <div class="muted">
+        Each slide is a standalone 1920×1080 HTML document. Click a tab below to view it.
+        Edit the HTML on the left, hit <b>Re-render</b> to update the preview on the right.
+        When all slides look right, click <b>Build cue video</b>.
+      </div>
+      <div class="slide-tabs" id="slide-tabs"></div>
+
+      <div class="slide-editor">
+        <div class="slide-code">
+          <div class="muted" style="margin-bottom:4px;">
+            <span id="slide-label">Slide HTML</span>
+            <span class="muted" id="slide-saved"></span>
+          </div>
+          <textarea id="slide-html" spellcheck="false"></textarea>
+          <div class="row" style="margin-top:8px;">
+            <button id="btn-rerender">Re-render this slide</button>
+            <button class="secondary" id="btn-revert">Revert to bot's version</button>
+            <span class="muted" id="slide-status"></span>
+          </div>
+        </div>
+        <div class="slide-preview">
+          <div class="muted" style="margin-bottom:4px;">Live preview (1920×1080, scaled)</div>
+          <iframe id="slide-iframe" sandbox="allow-same-origin"></iframe>
+          <div class="muted" style="margin-top:6px;">
+            Rendered PNG: <a id="slide-png-link" target="_blank">slide_NN.png</a>
+            <span id="slide-png-stale" class="pill missing" style="display:none;">stale — re-render to update</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="row">
+      <button id="btn-build-cue">Build cue video</button>
+      <button class="secondary" id="btn-back-review">← Back to script</button>
     </div>
   </section>
 
@@ -176,7 +244,7 @@
       <table class="audio" id="audio-table"></table>
       <div class="row">
         <button id="btn-finalize" disabled>Build final video</button>
-        <button class="secondary" id="btn-back-review">← Back to script</button>
+        <button class="secondary" id="btn-back-slides">← Back to slides</button>
       </div>
     </div>
   </section>
@@ -202,7 +270,7 @@
 
 <script>
 const $ = (sel) => document.querySelector(sel);
-const STAGES = ["stage-input", "stage-review", "stage-record", "stage-final"];
+const STAGES = ["stage-input", "stage-review", "stage-slides", "stage-record", "stage-final"];
 function show(stageId) {
   for (const s of STAGES) document.getElementById(s).classList.toggle("active", s === stageId);
 }
@@ -212,6 +280,8 @@ function escapeHtml(s) {
 
 let SCRIPT = null;  // {topic, aesthetic, segments, critique}
 let JOB_ID = null;
+let SLIDES = [];    // [{index, title, html, savedHtml, dirty, pngStale}]
+let CURRENT_SLIDE = 0;
 
 // ------------------------------------------------------------------ stage 1
 $("#btn-script").addEventListener("click", async () => {
@@ -282,20 +352,137 @@ function renderReview() {
 
 $("#btn-back-input").addEventListener("click", () => show("stage-input"));
 
-// ------------------------------------------------------------------ stage 3
-$("#btn-cue").addEventListener("click", async () => {
-  const btn = $("#btn-cue"); btn.disabled = true;
+// ----------------------------------------------------------- stage 2.5: slides
+$("#btn-design").addEventListener("click", async () => {
+  const btn = $("#btn-design"); btn.disabled = true;
+  const hint = $("#design-hint"); const prev = hint.textContent;
+  hint.textContent = "Designing slides... 30–60s.";
   try {
-    const res = await fetch("/cue", {
+    const res = await fetch("/design", {
       method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify({
         topic: SCRIPT.topic, aesthetic: SCRIPT.aesthetic, segments: SCRIPT.segments
       })
     });
     if (!res.ok) throw new Error(await res.text());
-    const { job_id } = await res.json();
-    JOB_ID = job_id;
-    $("#cue-job").textContent = "(job " + job_id + ")";
+    const data = await res.json();
+    JOB_ID = data.job_id;
+    SLIDES = data.slides.map(s => ({
+      index: s.index, title: s.title, html: s.html, savedHtml: s.html,
+      dirty: false, pngStale: true,  // pngs don't exist until we re-render
+    }));
+    CURRENT_SLIDE = 0;
+    renderSlideTabs();
+    selectSlide(0);
+    show("stage-slides");
+  } catch (e) {
+    alert("Slide design failed:\n" + e.message);
+  } finally {
+    btn.disabled = false;
+    hint.textContent = prev;
+  }
+});
+
+$("#btn-back-slides").addEventListener("click", () => show("stage-slides"));
+
+function renderSlideTabs() {
+  const tabs = $("#slide-tabs"); tabs.innerHTML = "";
+  SLIDES.forEach((s, i) => {
+    const b = document.createElement("button");
+    b.textContent = `${i + 1}. ${s.title.length > 28 ? s.title.slice(0, 28) + "…" : s.title}`;
+    if (i === CURRENT_SLIDE) b.classList.add("active");
+    if (s.dirty) {
+      const dot = document.createElement("span");
+      dot.className = "pip-dirty"; dot.textContent = "●";
+      b.appendChild(dot);
+    }
+    b.onclick = () => selectSlide(i);
+    tabs.appendChild(b);
+  });
+}
+
+function selectSlide(i) {
+  // Save the current textarea content into SLIDES before switching.
+  if (SLIDES[CURRENT_SLIDE]) {
+    const ta = $("#slide-html");
+    SLIDES[CURRENT_SLIDE].html = ta.value;
+    SLIDES[CURRENT_SLIDE].dirty = (ta.value !== SLIDES[CURRENT_SLIDE].savedHtml);
+  }
+  CURRENT_SLIDE = i;
+  const s = SLIDES[i];
+  $("#slide-label").textContent = `Slide ${i + 1} HTML — ${s.title}`;
+  $("#slide-html").value = s.html;
+  $("#slide-saved").textContent = s.dirty ? " (unsaved edits)" : "";
+  $("#slide-status").textContent = "";
+  $("#slide-iframe").srcdoc = s.html;
+  $("#slide-png-link").textContent = `slide_${String(i).padStart(2, "0")}.png`;
+  $("#slide-png-link").href = `/jobs/${JOB_ID}/slide/${i}/png?t=${Date.now()}`;
+  $("#slide-png-stale").style.display = s.pngStale ? "inline-block" : "none";
+  renderSlideTabs();
+}
+
+$("#slide-html").addEventListener("input", () => {
+  const s = SLIDES[CURRENT_SLIDE]; if (!s) return;
+  s.html = $("#slide-html").value;
+  s.dirty = (s.html !== s.savedHtml);
+  $("#slide-iframe").srcdoc = s.html;
+  $("#slide-saved").textContent = s.dirty ? " (unsaved edits)" : "";
+  renderSlideTabs();
+});
+
+$("#btn-rerender").addEventListener("click", async () => {
+  const i = CURRENT_SLIDE; const s = SLIDES[i];
+  const btn = $("#btn-rerender"); btn.disabled = true;
+  $("#slide-status").textContent = "Saving & re-rendering...";
+  try {
+    const r = await fetch(`/jobs/${JOB_ID}/slide/${i}/html`, {
+      method: "PUT", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ html: s.html, rerender: true })
+    });
+    if (!r.ok) throw new Error(await r.text());
+    s.savedHtml = s.html; s.dirty = false; s.pngStale = false;
+    $("#slide-saved").textContent = "";
+    $("#slide-status").textContent = "Re-rendered.";
+    $("#slide-png-link").href = `/jobs/${JOB_ID}/slide/${i}/png?t=${Date.now()}`;
+    $("#slide-png-stale").style.display = "none";
+    renderSlideTabs();
+  } catch (e) {
+    $("#slide-status").textContent = "Error: " + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$("#btn-revert").addEventListener("click", () => {
+  const s = SLIDES[CURRENT_SLIDE]; if (!s) return;
+  s.html = s.savedHtml; s.dirty = false;
+  $("#slide-html").value = s.html;
+  $("#slide-iframe").srcdoc = s.html;
+  $("#slide-saved").textContent = "";
+  renderSlideTabs();
+});
+
+// ------------------------------------------------------------------ stage 3
+$("#btn-build-cue").addEventListener("click", async () => {
+  // Save the current textarea before kicking off the cue build.
+  if (SLIDES[CURRENT_SLIDE]) SLIDES[CURRENT_SLIDE].html = $("#slide-html").value;
+
+  // Persist any unsaved HTML edits (without re-render — render-cue will do them all).
+  const dirty = SLIDES.filter(s => s.html !== s.savedHtml);
+  for (const s of dirty) {
+    const r = await fetch(`/jobs/${JOB_ID}/slide/${s.index}/html`, {
+      method: "PUT", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ html: s.html, rerender: false })
+    });
+    if (!r.ok) { alert("Failed to save slide " + (s.index + 1) + ":\n" + await r.text()); return; }
+    s.savedHtml = s.html; s.dirty = false;
+  }
+
+  const btn = $("#btn-build-cue"); btn.disabled = true;
+  try {
+    const res = await fetch(`/jobs/${JOB_ID}/render-cue`, { method: "POST" });
+    if (!res.ok) throw new Error(await res.text());
+    $("#cue-job").textContent = "(job " + JOB_ID + ")";
     $("#cue-progress").textContent = "Starting...\n";
     $("#cue-video").style.display = "none";
     $("#cue-actions").style.display = "none";
@@ -470,7 +657,7 @@ async function pollFinal() {
 
 $("#btn-restart").addEventListener("click", () => {
   $("#rough").value = "";
-  SCRIPT = null; JOB_ID = null;
+  SCRIPT = null; JOB_ID = null; SLIDES = []; CURRENT_SLIDE = 0;
   show("stage-input");
 });
 </script>

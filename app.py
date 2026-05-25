@@ -17,12 +17,17 @@ from pipeline import (
     Aesthetic,
     JOBS_DIR,
     Segment,
+    assemble_cue_video,
     audio_status,
     auto_narrate,
     build_cue,
     build_final,
+    design_slides,
     draft_script,
     find_audio_for_slide,
+    get_slide_html,
+    screenshot_slides,
+    update_slide_html,
 )
 
 ROOT = Path(__file__).resolve().parent
@@ -86,8 +91,125 @@ async def post_script(req: ScriptRequest) -> dict[str, Any]:
     }
 
 
+@app.post("/design")
+async def post_design(req: CueRequest) -> dict[str, Any]:
+    """Generate slide HTML for every segment (no screenshots, no cue video).
+    Synchronous — usually <30s — the user is waiting on this to edit slides."""
+    job_id = uuid.uuid4().hex[:10]
+    JOBS[job_id] = {
+        "stage": "design",
+        "status": "running",
+        "progress": [],
+        "error": None,
+        "cue_video": None,
+        "script": None,
+        "final_video": None,
+    }
+    try:
+        aesthetic = Aesthetic(**req.aesthetic.model_dump())
+        segments = [Segment(**s.model_dump()) for s in req.segments]
+        result = await design_slides(
+            req.topic, aesthetic, segments, job_id=job_id,
+            progress_cb=lambda m: JOBS[job_id]["progress"].append(m),
+        )
+        JOBS[job_id]["status"] = "done"
+        return {
+            "job_id": result.job_id,
+            "slides": [
+                {
+                    "index": i,
+                    "title": s.title,
+                    "html": p.read_text(),
+                }
+                for i, (s, p) in enumerate(zip(segments, result.slide_html_paths))
+            ],
+        }
+    except Exception as e:
+        traceback.print_exc()
+        JOBS[job_id]["status"] = "error"
+        JOBS[job_id]["error"] = str(e)
+        raise HTTPException(500, f"design failed: {e}")
+
+
+@app.get("/jobs/{job_id}/slide/{index}/html", response_class=PlainTextResponse)
+async def get_slide_html_endpoint(job_id: str, index: int) -> str:
+    try:
+        return get_slide_html(job_id, index)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+
+
+class HtmlBody(BaseModel):
+    html: str
+    rerender: bool = True   # also re-screenshot after saving
+
+
+@app.put("/jobs/{job_id}/slide/{index}/html")
+async def put_slide_html(job_id: str, index: int, body: HtmlBody) -> dict[str, Any]:
+    try:
+        update_slide_html(job_id, index, body.html)
+    except (FileNotFoundError, IndexError) as e:
+        raise HTTPException(404, str(e))
+    if body.rerender:
+        try:
+            await screenshot_slides(job_id, indices=[index])
+        except Exception as e:
+            traceback.print_exc()
+            raise HTTPException(500, f"re-screenshot failed: {e}")
+    return {"saved": True, "rerendered": body.rerender}
+
+
+@app.get("/jobs/{job_id}/slide/{index}/png")
+async def get_slide_png(job_id: str, index: int) -> FileResponse:
+    p = JOBS_DIR / job_id / "slides" / f"slide_{index:02d}.png"
+    if not p.exists():
+        raise HTTPException(404, "slide PNG not found — call PUT html first")
+    # ?t= cache-buster handled by the client.
+    return FileResponse(p, media_type="image/png")
+
+
+@app.post("/jobs/{job_id}/render-cue")
+async def post_render_cue(job_id: str) -> dict[str, str]:
+    """Re-screenshot all slides and rebuild the silent cue video.
+    Use this after PUT'ing slide HTML edits. Async — poll status."""
+    if job_id not in JOBS:
+        # Allow rendering for design jobs not yet in the dict (e.g. after restart).
+        JOBS[job_id] = {"stage": "design", "status": "done", "progress": [],
+                        "error": None, "cue_video": None, "script": None,
+                        "final_video": None}
+    j = JOBS[job_id]
+    j["stage"] = "cue"
+    j["status"] = "queued"
+    j["progress"] = []
+    j["error"] = None
+    j["cue_video"] = None
+
+    async def run() -> None:
+        j["status"] = "running"
+
+        def log(msg: str) -> None:
+            j["progress"].append(msg)
+
+        try:
+            await screenshot_slides(job_id, progress_cb=log)
+            result = await assemble_cue_video(job_id, progress_cb=log)
+            j["cue_video"] = str(result.cue_video_path)
+            j["script"] = str(result.script_text_path)
+            j["audio_dir"] = str(result.audio_dir)
+            j["status"] = "done"
+        except Exception as e:
+            traceback.print_exc()
+            j["status"] = "error"
+            j["error"] = str(e)
+
+    asyncio.create_task(run())
+    return {"job_id": job_id}
+
+
 @app.post("/cue")
 async def post_cue(req: CueRequest) -> dict[str, str]:
+    """Legacy all-in-one: design + screenshot + assemble. Prefer /design then
+    /render-cue if you want to edit HTML between the two."""
     job_id = uuid.uuid4().hex[:10]
     JOBS[job_id] = {
         "stage": "cue",

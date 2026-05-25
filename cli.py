@@ -24,11 +24,13 @@ from pathlib import Path
 from pipeline import (
     JOBS_DIR,
     Segment,
+    assemble_cue_video,
     audio_status,
     auto_narrate,
-    build_cue,
     build_final,
+    design_slides,
     draft_script,
+    screenshot_slides,
 )
 
 
@@ -213,14 +215,56 @@ async def run_first_time() -> str:
         if choice == "q":
             sys.exit(0)
 
-    hr(f"building cue video for {len(draft.segments)} slides")
-    cue = await build_cue(draft.topic, draft.aesthetic, draft.segments,
-                          progress_cb=progress_printer)
+    hr(f"designing {len(draft.segments)} slides (HTML only — no screenshots yet)")
+    design = await design_slides(draft.topic, draft.aesthetic, draft.segments,
+                                 progress_cb=progress_printer)
+    good(f"\nSlide HTML written under: {design.slide_html_paths[0].parent}")
+
+    edit_slides_loop(design.job_id, design.slide_html_paths)
+
+    hr(f"screenshotting slides + building cue video")
+    await screenshot_slides(design.job_id, progress_cb=progress_printer)
+    cue = await assemble_cue_video(design.job_id, progress_cb=progress_printer)
     good("\nCue ready.")
     print(f"  Cue video : {cue.cue_video_path}")
     print(f"  Script    : {cue.script_text_path}")
     print(f"  Audio dir : {cue.audio_dir}")
     return cue.job_id
+
+
+def edit_slides_loop(job_id: str, html_paths: list[Path]) -> None:
+    """Let the user edit any slide HTML in $EDITOR before screenshots are taken.
+
+    NOTE: Not async; the user is sitting in front of the prompt, no concurrency.
+    """
+    while True:
+        hr("slide HTML")
+        for i, p in enumerate(html_paths):
+            size = p.stat().st_size if p.exists() else 0
+            print(f"  {i + 1}. {p}  {C.DIM}({size} bytes){C.RESET}")
+        try:
+            choice = input(
+                f"\n{C.BOLD}[1..{len(html_paths)}]{C.RESET} edit slide   "
+                f"{C.BOLD}[d]{C.RESET}one (build cue video)   "
+                f"{C.BOLD}[o]{C.RESET}pen slides folder   "
+                f"{C.BOLD}[q]{C.RESET}uit: "
+            ).strip().lower()
+        except EOFError:
+            return  # non-interactive: skip edits, proceed
+        if choice in ("d", ""):
+            return
+        if choice == "q":
+            sys.exit(0)
+        if choice == "o":
+            subprocess.run(["open", str(html_paths[0].parent)])
+            continue
+        if choice.isdigit():
+            idx = int(choice) - 1
+            if 0 <= idx < len(html_paths):
+                editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "vi"
+                subprocess.run([editor, str(html_paths[idx])])
+                continue
+        warn("Not a valid choice.")
 
 
 def wait_for_audio_loop(job_id: str) -> None:

@@ -385,13 +385,31 @@ def _load_plan(job_dir: Path) -> tuple[str, Aesthetic, list[Segment]]:
     return data["topic"], aes, segs
 
 
-async def build_cue(
+def _slide_html_path(job_dir: Path, index: int) -> Path:
+    return job_dir / "slides" / f"slide_{index:02d}.html"
+
+
+def _slide_png_path(job_dir: Path, index: int) -> Path:
+    return job_dir / "slides" / f"slide_{index:02d}.png"
+
+
+@dataclass
+class DesignResult:
+    """Output of stage `design_slides` — HTML for every slide, no screenshots yet."""
+    job_id: str
+    slide_html_paths: list[Path]
+    progress: list[str] = field(default_factory=list)
+
+
+async def design_slides(
     topic: str,
     aesthetic: Aesthetic,
     segments: list[Segment],
     job_id: str | None = None,
     progress_cb=None,
-) -> CueResult:
+) -> DesignResult:
+    """Generate slide HTML (no screenshots, no cue video). Persists plan.json
+    and one .html file per slide so they can be edited before rendering."""
     job_id = job_id or uuid.uuid4().hex[:10]
     job_dir = _job_dir(job_id)
     if job_dir.exists():
@@ -419,20 +437,99 @@ async def build_cue(
         *(_design_slide(topic, aesthetic, seg) for seg in segments)
     )
 
-    slide_pngs: list[Path] = []
-    log("Launching headless browser for screenshots...")
+    paths: list[Path] = []
+    for i, html in enumerate(htmls):
+        p = _slide_html_path(job_dir, i)
+        p.write_text(html)
+        paths.append(p)
+        log(f"Wrote slide {i + 1}/{len(htmls)} HTML ({len(html)} bytes)")
+
+    return DesignResult(job_id=job_id, slide_html_paths=paths, progress=progress)
+
+
+def get_slide_html(job_id: str, index: int) -> str:
+    p = _slide_html_path(_job_dir(job_id), index)
+    if not p.exists():
+        raise FileNotFoundError(f"no HTML for slide {index} in job {job_id}")
+    return p.read_text()
+
+
+def update_slide_html(job_id: str, index: int, html: str) -> Path:
+    """Replace the HTML for one slide. Caller should re-screenshot afterward."""
+    job_dir = _job_dir(job_id)
+    if not (job_dir / "plan.json").exists():
+        raise FileNotFoundError(f"no plan for job {job_id}")
+    _, _, segments = _load_plan(job_dir)
+    if not 0 <= index < len(segments):
+        raise IndexError(f"slide index {index} out of range (0..{len(segments) - 1})")
+    p = _slide_html_path(job_dir, index)
+    p.write_text(html)
+    return p
+
+
+async def screenshot_slides(
+    job_id: str,
+    indices: list[int] | None = None,
+    progress_cb=None,
+) -> list[Path]:
+    """Render the specified slides' HTML to PNG. Defaults to all slides."""
+    job_dir = _job_dir(job_id)
+    if not (job_dir / "plan.json").exists():
+        raise FileNotFoundError(f"no plan for job {job_id}")
+    _, _, segments = _load_plan(job_dir)
+    if indices is None:
+        indices = list(range(len(segments)))
+
+    pngs: list[Path] = []
     async with async_playwright() as p:
         browser = await p.chromium.launch()
         try:
-            for i, html in enumerate(htmls):
-                html_path = slides_dir / f"slide_{i:02d}.html"
-                png_path = slides_dir / f"slide_{i:02d}.png"
-                html_path.write_text(html)
-                await _screenshot_slide(html, png_path, browser)
-                slide_pngs.append(png_path)
-                log(f"Captured slide {i + 1}/{len(htmls)}")
+            for i in indices:
+                html_path = _slide_html_path(job_dir, i)
+                if not html_path.exists():
+                    raise FileNotFoundError(f"missing HTML for slide {i}: {html_path}")
+                png = _slide_png_path(job_dir, i)
+                await _screenshot_slide(html_path.read_text(), png, browser)
+                pngs.append(png)
+                if progress_cb:
+                    progress_cb(f"Captured slide {i + 1}/{len(segments)}")
         finally:
             await browser.close()
+    return pngs
+
+
+async def assemble_cue_video(
+    job_id: str,
+    progress_cb=None,
+) -> CueResult:
+    """Assumes slide PNGs already exist. Builds silent cue video + script.txt."""
+    job_dir = _job_dir(job_id)
+    if not (job_dir / "plan.json").exists():
+        raise FileNotFoundError(f"no plan for job {job_id}")
+    topic, _aesthetic, segments = _load_plan(job_dir)
+    work_dir = job_dir / "work"
+    work_dir.mkdir(exist_ok=True)
+    audio_dir = job_dir / "audio"
+    audio_dir.mkdir(exist_ok=True)
+
+    progress: list[str] = []
+
+    def log(msg: str) -> None:
+        progress.append(msg)
+        if progress_cb:
+            try:
+                progress_cb(msg)
+            except Exception:
+                pass
+
+    slide_pngs: list[Path] = []
+    for i in range(len(segments)):
+        png = _slide_png_path(job_dir, i)
+        if not png.exists():
+            raise FileNotFoundError(
+                f"missing slide PNG for slide {i}: {png} — call screenshot_slides first"
+            )
+        slide_pngs.append(png)
 
     durations = [_estimate_duration(s.narration) for s in segments]
 
@@ -459,6 +556,26 @@ async def build_cue(
         audio_dir=audio_dir,
         progress=progress,
     )
+
+
+async def build_cue(
+    topic: str,
+    aesthetic: Aesthetic,
+    segments: list[Segment],
+    job_id: str | None = None,
+    progress_cb=None,
+) -> CueResult:
+    """Convenience all-in-one: design → screenshot → assemble. Equivalent to
+    `design_slides` + `screenshot_slides` + `assemble_cue_video`."""
+    design = await design_slides(topic, aesthetic, segments, job_id=job_id,
+                                 progress_cb=progress_cb)
+    if progress_cb:
+        progress_cb("Launching headless browser for screenshots...")
+    await screenshot_slides(design.job_id, progress_cb=progress_cb)
+    cue = await assemble_cue_video(design.job_id, progress_cb=progress_cb)
+    # Preserve the design-stage progress lines for callers that read .progress.
+    cue.progress = design.progress + cue.progress
+    return cue
 
 
 # ---------------------------------------------------------------------------

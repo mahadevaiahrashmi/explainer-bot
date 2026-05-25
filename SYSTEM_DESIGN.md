@@ -62,14 +62,31 @@ this document is the entry point for *changing* it.
                             │  approved segments
                             ▼
                   ┌──────────────────────┐
-                  │      CUE STAGE       │   per-job dir on disk:
-                  │   build_cue(…)       │     plan.json
-                  │                      │     slides/slide_NN.html|png
-                  │  • N claude calls    │     audio/    (empty)
-                  │    (slide HTML)      │     work/
-                  │  • N playwright PNG  │     cue_video.mp4
-                  │  • silent ffmpeg     │     script.txt
-                  │    cue_video + txt   │
+                  │     DESIGN STAGE     │   per-job dir on disk:
+                  │  design_slides(…)    │     plan.json
+                  │                      │     slides/slide_NN.html
+                  │  • N parallel claude │     audio/    (empty)
+                  │    calls → slide HTML│
+                  │  • writes one .html  │
+                  │    per slide         │
+                  └─────────┬────────────┘
+                            │  user can edit any slide_NN.html
+                            ▼                 (web UI iframe + textarea,
+                  ┌──────────────────────┐     CLI $EDITOR)
+                  │  SLIDE-EDIT LOOP     │  PUT /jobs/<id>/slide/<i>/html
+                  │  preview HTML in     │  → optional auto re-screenshot
+                  │  iframe; edit; save  │
+                  └─────────┬────────────┘
+                            │  approved slide HTML
+                            ▼
+                  ┌──────────────────────┐
+                  │   CUE-BUILD STAGE    │   adds to per-job dir:
+                  │   screenshot_slides()│     slides/slide_NN.png
+                  │   assemble_cue_video │     work/cue_clip_NN.mp4
+                  │                      │     cue_video.mp4
+                  │  • N playwright PNG  │     script.txt
+                  │  • N silent ffmpeg   │
+                  │  • concat + script.tx│
                   └─────────┬────────────┘
                             │  audio_dir path
                             ▼
@@ -101,10 +118,13 @@ this document is the entry point for *changing* it.
                           MP4
 ```
 
-Two stages, two artifacts (cue video + final video). All state between
-stages lives on disk under `jobs/<job_id>/`, so any stage can be re-run
-independently. The HTTP server and the CLI are thin wrappers around the
-same `pipeline.*` functions.
+Three stages produce three intermediate artifacts (slide HTML, cue video,
+final video). All state between stages lives on disk under
+`jobs/<job_id>/`, so any stage can be re-run independently — re-editing
+HTML triggers only the screenshot + cue assembly, never another Claude
+call. The HTTP server and the CLI are thin wrappers around the same
+`pipeline.*` functions; both expose the same design → edit → cue → audio
+→ final flow.
 
 ---
 
@@ -115,7 +135,7 @@ narrow responsibility.
 
 | File                  | Role                                                            | Stable interface                                                                                                                  |
 | --------------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `pipeline.py`         | Pure-Python pipeline. The only module that knows about Claude, Playwright, `say`, and ffmpeg. | `draft_script(rough_points) → ScriptDraft` <br> `build_cue(topic, aesthetic, segments, job_id?, progress_cb?) → CueResult` <br> `auto_narrate(job_id, overwrite=False, progress_cb?) → list[Path]` <br> `audio_status(job_id) → dict` <br> `find_audio_for_slide(audio_dir, index) → Path \| None` <br> `build_final(job_id, progress_cb?) → FinalResult` |
+| `pipeline.py`         | Pure-Python pipeline. The only module that knows about Claude, Playwright, `say`, and ffmpeg. | `draft_script(rough_points) → ScriptDraft` <br> `design_slides(topic, aesthetic, segments, job_id?) → DesignResult`  *(stops after writing slide HTML)* <br> `get_slide_html(job_id, index) → str` <br> `update_slide_html(job_id, index, html) → Path` <br> `screenshot_slides(job_id, indices?) → list[Path]` <br> `assemble_cue_video(job_id) → CueResult` <br> `build_cue(...)` *(convenience: design+screenshot+assemble)* <br> `auto_narrate(job_id, overwrite=False) → list[Path]` <br> `audio_status(job_id) → dict` <br> `find_audio_for_slide(audio_dir, index) → Path \| None` <br> `build_final(job_id) → FinalResult` |
 | `prompts.py`          | All Claude system prompts. Pure data; no logic.                 | Module constants: `WRITER_PROMPT`, `CRITIC_PROMPT`, `SLIDE_DESIGNER_PROMPT`, `AESTHETIC_PICKER_PROMPT`.                           |
 | `app.py`              | FastAPI HTTP server. Routes call into `pipeline.*` and persist state in process memory. | See §5 (API contracts).                                                                                                           |
 | `cli.py`              | Interactive terminal UI. Same pipeline as the web UI, no HTTP.  | Entry point: `python cli.py [--resume JOB_ID] [--auto-narrate]`.                                                                  |
@@ -296,10 +316,11 @@ Timeouts: each underlying `claude` call has a 240 s ceiling (see
 `pipeline.CLAUDE_TIMEOUT_S`). Three calls total run partly in parallel so
 worst case ≈ 4 min.
 
-### 5.2 `POST /cue`
+### 5.2 `POST /design`
 
-Kicks off the cue stage **asynchronously** in a background task. Returns
-immediately with the job id; client polls `/jobs/{id}/status`.
+Generate slide HTML for every segment. **Synchronous** — usually <30 s
+(N parallel `claude` calls) — the response carries the HTML so the user
+can edit it immediately. No screenshots and no cue video happen here.
 
 ```jsonc
 // Request
@@ -310,12 +331,76 @@ immediately with the job id; client polls `/jobs/{id}/status`.
 }
 
 // Response 200
+{
+  "job_id": "aae6a72695",
+  "slides": [
+    { "index": 0, "title": "...", "html": "<!doctype html>..." },
+    { "index": 1, "title": "...", "html": "<!doctype html>..." }
+  ]
+}
+```
+
+`design_slides` writes `jobs/<id>/plan.json` and one
+`jobs/<id>/slides/slide_NN.html` per segment. The PNG files do **not**
+exist yet — they are created by `POST /render-cue` (or by per-slide
+`PUT /jobs/<id>/slide/<i>/html?rerender=true`).
+
+### 5.2a `GET /jobs/{job_id}/slide/{index}/html`
+
+Returns the current HTML for one slide as `text/plain`. Used by the web
+UI's textarea to load the editable source.
+
+### 5.2b `PUT /jobs/{job_id}/slide/{index}/html`
+
+Replace one slide's HTML.
+
+```jsonc
+// Request
+{ "html": "<!doctype html><html>...new content...</html>",
+  "rerender": true   // optional, default true: re-screenshot this slide right away
+}
+
+// Response 200
+{ "saved": true, "rerendered": true }
+```
+
+When `rerender=false`, the HTML is saved but the PNG becomes stale. The
+next `POST /render-cue` will pick it up.
+
+### 5.2c `GET /jobs/{job_id}/slide/{index}/png`
+
+Returns the rendered PNG (`image/png`) for one slide. 404 if the PNG
+hasn't been rendered yet. Web UI uses `?t=<timestamp>` to defeat the
+browser cache after a re-render.
+
+### 5.2d `POST /jobs/{job_id}/render-cue`
+
+Re-screenshot **all** slides and rebuild the silent cue video. Async —
+poll `/jobs/{id}/status` the same way as `/cue`. This is what the web UI
+calls when the user clicks "Build cue video" after edits.
+
+```jsonc
+// Response 200
 { "job_id": "aae6a72695" }
 ```
 
-The client is expected to have already approved/edited the script in §5.1
-before calling this. The server treats the request body as authoritative
-— there is no server-side draft persistence between `/script` and `/cue`.
+### 5.2e `POST /cue`  *(legacy / convenience)*
+
+Equivalent to `POST /design` immediately followed by `POST /render-cue`,
+in one async task. Use this only when you don't want to edit slide HTML
+between design and render. Kicks off asynchronously; client polls
+`/jobs/{id}/status`.
+
+```jsonc
+// Request (same shape as /design)
+// Response 200
+{ "job_id": "aae6a72695" }
+```
+
+The client is expected to have already approved/edited the script in
+§5.1 before calling this. The server treats the request body as
+authoritative — there is no server-side draft persistence between
+`/script` and `/design`/`/cue`.
 
 ### 5.3 `GET /jobs/{job_id}/status`
 

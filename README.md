@@ -4,10 +4,16 @@ Turn rough points into a narrated explainer video — recorded **in your own
 voice**. Inspired by the [3Blue1Brown](https://www.youtube.com/watch?v=jx6FevmKJGg)
 style: short slides, vivid analogies, a genuine sense of wonder.
 
-It runs in two stages:
+It runs in three stages:
 
 ```
-  rough points ─► script + critique ─► cue video + script.txt
+  rough points ─► script + critique ─► slide HTML (one per segment)
+                                              │
+                       (preview each slide in an iframe, edit the HTML
+                        in a textarea, re-render to update the PNG)
+                                              │
+                                              ▼
+                                       cue video + script.txt
                                               │
                           (you record audio for each slide,
                            drop the files into the audio/ folder)
@@ -229,13 +235,19 @@ Open <http://localhost:8000> and:
 
 1. **Type rough points** → "Draft script."
 2. **Review the script + critique.** Edit any title / visual / narration in
-   place. Click **"Approve & build cue video."**
-3. **Cue video appears.** Watch it, download it, download `script.txt`.
-4. **Record one audio file per slide** (`slide_00.wav`, `slide_01.wav`, …) —
+   place. Click **"Approve script → design slides."**
+3. **Slide HTML appears.** A tab bar at the top lists every slide. Pick a
+   tab; on the left you see the raw HTML in an editable textarea, on the
+   right a live iframe preview that updates as you type. Click
+   **"Re-render this slide"** to save the edit and refresh the PNG;
+   **"Revert to bot's version"** to throw away unsaved edits. Click
+   **"Build cue video"** when all slides look right.
+4. **Cue video appears.** Watch it, download it, download `script.txt`.
+5. **Record one audio file per slide** (`slide_00.wav`, `slide_01.wav`, …) —
    any common audio format (.wav, .mp3, .m4a, .aiff, …).
-5. **Drag-drop the files** onto the upload area. The status table shows
+6. **Drag-drop the files** onto the upload area. The status table shows
    which slides have audio. You can remove and re-upload one slide at a time.
-6. When all slides are green, click **"Build final video."** A few seconds
+7. When all slides are green, click **"Build final video."** A few seconds
    later the MP4 is playable and downloadable in-page.
 
 If you want to skip recording entirely (or just preview the video before
@@ -255,6 +267,10 @@ Same flow, but:
 - Approve / edit / redraft is keyboard-driven.
 - "Edit in editor" opens the script in `$EDITOR` as a Markdown file with
   one section per slide.
+- After approving the script the bot writes one `slide_NN.html` per
+  slide and lists them with their paths. Type a slide number to edit
+  that HTML in `$EDITOR`, `o` to open the slides folder in Finder, or
+  `d` to proceed to building the cue video.
 - After the cue is built, the bot prints the audio folder path and waits.
   Record your files, save them into that folder, hit `r` to rescan.
   When all are present, hit `f` to finalize.
