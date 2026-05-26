@@ -124,7 +124,10 @@ Depends on the backend you pick:
 
 ## For technical readers
 
-> - Full architectural reference (components, API contracts, sequence
+> **Doc map:**
+> - Problem, personas, requirements, success metrics → **[PRD.md](PRD.md)**.
+> - UX flows, screens, design system, copy guidelines → **[PRODUCT_DESIGN.md](PRODUCT_DESIGN.md)**.
+> - Architectural reference (components, API contracts, sequence
 >   diagrams, decision log) → **[SYSTEM_DESIGN.md](SYSTEM_DESIGN.md)**.
 > - Testing strategy, UAT checklist, and bug-reporting workflow →
 >   **[TESTING.md](TESTING.md)**.
