@@ -79,6 +79,47 @@ Slide design and the critic prompt benefit a lot from a bigger model;
 Trade-off: a single slide-design call on a laptop CPU is 30–90 s with a
 14 B model.
 
+#### Web UI on Ollama by default
+
+```bash
+BACKEND=ollama .venv/bin/uvicorn app:app --port 8000
+```
+
+Open <http://127.0.0.1:8000>. The picker badge will read
+`ollama:llama3.2 (env)`.
+
+**Per-request switching in the web UI:** leave `BACKEND` unset when
+starting the server, then in the model picker at the top of the page
+pick `ollama — local, free` and put `llama3.2` (or any other model
+you've pulled) in the model box. Each request picks that backend.
+
+#### Two caveats with `llama3.2`
+
+1. **Speed.** On Apple Silicon CPU, a single slide-design call takes
+   ~30–60 s; a 6-slide video will spend 3–6 minutes in Ollama work
+   alone. (Subscription Claude is closer to 5–10 s per call.)
+2. **Quality drop on slide HTML.** `llama3.2` is fine for the script
+   and critic, but its slide HTML is less restrained than Claude's —
+   you'll hit the "ask bot to fix this slide" loop more often. If you
+   have RAM to spare, `ollama pull qwen2.5:14b` (~9 GB) is a
+   meaningful upgrade for slide design:
+
+   ```bash
+   ollama pull qwen2.5:14b
+   BACKEND=ollama OLLAMA_MODEL=qwen2.5:14b .venv/bin/python cli.py --auto-narrate
+   ```
+
+#### Useful Ollama commands
+
+```bash
+ollama list                     # what models you have
+ollama ps                       # what's loaded in RAM right now
+ollama pull <model>             # add a model
+ollama rm <model>               # remove a model
+brew services stop ollama       # stop the daemon
+brew services start ollama      # start it again (or after reboot, it's already on)
+```
+
 ### Backend 3 — `llm` (cloud API key — Anthropic / OpenAI / Gemini / …)
 
 The `llm` CLI is already in our dependencies. Pick a provider and set its
