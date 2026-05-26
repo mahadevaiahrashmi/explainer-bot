@@ -179,8 +179,13 @@ def progress_printer(msg: str) -> None:
 
 # ----- main flow -----------------------------------------------------------
 
-async def run_first_time() -> str:
-    """Returns the job_id after the cue stage completes."""
+async def run_first_time(non_interactive: bool = False) -> str:
+    """Returns the job_id after the cue stage completes.
+
+    When non_interactive=True (e.g. --auto-narrate or stdin piped from a
+    file), the bot auto-approves the script and skips the slide-edit menu
+    so the entire pipeline runs without any prompts.
+    """
     hr("rough points")
     rough = read_rough_points().strip()
     if not rough:
@@ -197,31 +202,41 @@ async def run_first_time() -> str:
     hr("segments")
     render_segments(draft.segments)
 
-    while True:
-        choice = input(
-            f"\n{C.BOLD}[a]{C.RESET}pprove   "
-            f"{C.BOLD}[e]{C.RESET}dit in $EDITOR   "
-            f"{C.BOLD}[r]{C.RESET}edraft (new rough points)   "
-            f"{C.BOLD}[q]{C.RESET}uit: "
-        ).strip().lower()
-        if choice in ("a", ""):
-            break
-        if choice == "e":
-            draft.segments = edit_segments(draft.segments)
-            hr("segments")
-            render_segments(draft.segments)
-            continue
-        if choice == "r":
-            return await run_first_time()
-        if choice == "q":
-            sys.exit(0)
+    if non_interactive:
+        info("[non-interactive] auto-approving the script.")
+    else:
+        while True:
+            try:
+                choice = input(
+                    f"\n{C.BOLD}[a]{C.RESET}pprove   "
+                    f"{C.BOLD}[e]{C.RESET}dit in $EDITOR   "
+                    f"{C.BOLD}[r]{C.RESET}edraft (new rough points)   "
+                    f"{C.BOLD}[q]{C.RESET}uit: "
+                ).strip().lower()
+            except EOFError:
+                info("[stdin closed] auto-approving the script.")
+                break
+            if choice in ("a", ""):
+                break
+            if choice == "e":
+                draft.segments = edit_segments(draft.segments)
+                hr("segments")
+                render_segments(draft.segments)
+                continue
+            if choice == "r":
+                return await run_first_time(non_interactive=non_interactive)
+            if choice == "q":
+                sys.exit(0)
 
     hr(f"designing {len(draft.segments)} slides (HTML only — no screenshots yet)")
     design = await design_slides(draft.topic, draft.aesthetic, draft.segments,
                                  progress_cb=progress_printer)
     good(f"\nSlide HTML written under: {design.slide_html_paths[0].parent}")
 
-    edit_slides_loop(design.job_id, design.slide_html_paths)
+    if non_interactive:
+        info("[non-interactive] skipping slide-edit menu.")
+    else:
+        edit_slides_loop(design.job_id, design.slide_html_paths)
 
     hr(f"screenshotting slides + building cue video")
     await screenshot_slides(design.job_id, progress_cb=progress_printer)
@@ -370,8 +385,9 @@ async def amain() -> None:
     ap.add_argument("--resume", metavar="JOB_ID",
                     help="Skip drafting; go straight to audio status for an existing job")
     ap.add_argument("--auto-narrate", action="store_true",
-                    help="Skip the audio-recording wait; auto-narrate any missing slides "
-                         "with macOS `say` and finalize immediately.")
+                    help="Hands-off mode: auto-approve the script, skip the slide-edit "
+                         "menu, auto-narrate any missing slides with macOS `say`, and "
+                         "finalize immediately. No prompts.")
     args = ap.parse_args()
 
     if args.resume:
@@ -381,7 +397,7 @@ async def amain() -> None:
         job_id = args.resume
         info(f"Resuming job {job_id}")
     else:
-        job_id = await run_first_time()
+        job_id = await run_first_time(non_interactive=args.auto_narrate)
 
     if args.auto_narrate:
         hr("auto-narrating missing slides")

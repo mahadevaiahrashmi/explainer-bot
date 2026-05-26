@@ -125,12 +125,14 @@ Depends on the backend you pick:
 ## For technical readers
 
 > **Doc map:**
+> - Install, run, troubleshoot → **[USER_MANUAL.md](USER_MANUAL.md)**.
 > - Problem, personas, requirements, success metrics → **[PRD.md](PRD.md)**.
 > - UX flows, screens, design system, copy guidelines → **[PRODUCT_DESIGN.md](PRODUCT_DESIGN.md)**.
 > - Architectural reference (components, API contracts, sequence
 >   diagrams, decision log) → **[SYSTEM_DESIGN.md](SYSTEM_DESIGN.md)**.
-> - Testing strategy, UAT checklist, and bug-reporting workflow →
+> - Testing strategy, UAT checklist, bug-reporting workflow →
 >   **[TESTING.md](TESTING.md)**.
+> - How the reviewer / critic works → **[docs/reviewer.md](docs/reviewer.md)**.
 >
 > This section is the quick overview.
 
@@ -231,258 +233,25 @@ fresh process (e.g. from `cli.py --resume <id>`).
 
 ## User manual
 
-### One-time setup
+The full step-by-step guide — install, backends, web UI, terminal UI,
+one-shot end-to-end (Claude / Ollama / cloud), troubleshooting, cost —
+lives in **[USER_MANUAL.md](USER_MANUAL.md)**.
 
-You need macOS, Homebrew, and **one** of the three LLM backends (see
-[Backend configuration](#backend-configuration) for details — Claude Code,
-Ollama, or any cloud key via `llm`).
-
-```bash
-brew install ffmpeg
-cd content
-uv venv --python 3.11
-uv sync
-.venv/bin/playwright install chromium
-```
-
-Verify the chosen backend is wired up:
+Quick starts:
 
 ```bash
-.venv/bin/python -c "import pipeline, asyncio; print('backend =', pipeline.get_backend()); \
-    asyncio.run(pipeline.llm_call('Reply with exactly OK.', 'go')) and print('reply ok')"
-```
+# Web UI
+.venv/bin/uvicorn app:app --reload --port 8000   # → http://localhost:8000
 
-### Backend configuration
-
-`BACKEND=` (env var) picks which one to use. Unset = auto-detect, preferring
-`claude_cli` → `ollama` → `llm` in that order.
-
-#### Backend 1 — `claude_cli` (Claude Code subscription, no API key)
-
-Already installed Claude Code? You're done. The bot detects the `claude`
-binary and uses your subscription. Verify with `claude --version`.
-
-```bash
-export BACKEND=claude_cli   # optional; auto-detected anyway
-```
-
-#### Backend 2 — `ollama` (free, local, no internet)
-
-```bash
-brew install ollama
-ollama serve &              # start the daemon in another shell or as a service
-ollama pull llama3.2        # ~2 GB; or qwen2.5:14b (~9 GB) for better quality
-export BACKEND=ollama
-export OLLAMA_MODEL=llama3.2          # default
-# export OLLAMA_URL=http://localhost:11434    # default
-```
-
-Slide design and the critic prompt benefit a lot from a bigger model;
-`qwen2.5:14b` or `llama3.3:70b` are noticeably better than `llama3.2`.
-Trade-off: a single slide-design call on a laptop CPU is 30–90 s with a 14B
-model.
-
-#### Backend 3 — `llm` (cloud API key — Anthropic / OpenAI / Gemini / …)
-
-The `llm` CLI is already in our dependencies. Pick a provider and set its
-key:
-
-```bash
-# Pick one:
-.venv/bin/llm keys set claude        # Anthropic API key  (paste when prompted)
-.venv/bin/llm keys set openai        # OpenAI API key
-.venv/bin/llm keys set gemini        # Gemini API key (free tier)
-
-# Pick the model — anything llm knows about:
-export BACKEND=llm
-export LLM_MODEL=claude-sonnet-4-5           # Anthropic
-# export LLM_MODEL=gpt-4.1                   # OpenAI
-# export LLM_MODEL=gemini-2.0-flash          # Gemini (has a free tier)
-```
-
-`.venv/bin/llm models` lists every model your installed plugins know about.
-Cost: depends on the provider's pricing per token. Quality: depends on the
-model; Claude-Sonnet ≥ GPT-4.1 ≈ Gemini-2.0 for this task.
-
-### Web UI
-
-```bash
-cd content
-.venv/bin/uvicorn app:app --reload --port 8000
-```
-
-Open <http://localhost:8000> and:
-
-1. **Type rough points** into the panel at the top → "Draft script."
-   (The rough-points panel stays visible on every stage — edit it and
-   click "Draft script" again at any point to redraft.)
-2. **Review the script + critique.** Edit any title / visual / narration in
-   place. Click **"Approve script → design slides."**
-3. **Slide HTML appears.** A tab bar at the top lists every slide. Pick a
-   tab; on the left you see the raw HTML in an editable textarea, on the
-   right a live iframe preview that updates as you type. Click
-   **"Re-render this slide"** to save the edit and refresh the PNG;
-   **"Revert to bot's version"** to throw away unsaved edits. If the
-   slide has a problem you can describe in words (overlapping text, the
-   diagram in the wrong place, an unreadable label), click **"Report
-   issue / ask bot to fix"**, describe the issue, and the bot will
-   rewrite that slide's HTML — no need to edit by hand. Click
-   **"Build cue video"** when all slides look right.
-4. **Cue video appears.** Watch it, download it, download `script.txt`.
-5. **Record one audio file per slide** (`slide_00.wav`, `slide_01.wav`, …) —
-   any common audio format (.wav, .mp3, .m4a, .aiff, …).
-6. **Drag-drop the files** onto the upload area. The status table shows
-   which slides have audio. You can remove and re-upload one slide at a time.
-7. When all slides are green, click **"Build final video."** A few seconds
-   later the MP4 is playable and downloadable in-page.
-
-If you want to skip recording entirely (or just preview the video before
-committing to a take), click **"Auto-narrate missing slides"** — macOS
-`say` will fill in any slide you don't have a recording for. Use
-**"Auto-narrate everything (overwrite)"** to replace all slides at once.
-
-### Terminal UI
-
-```bash
-cd content
+# Interactive terminal
 .venv/bin/python cli.py
+
+# Hands-off one-shot (Claude Code subscription)
+echo "your rough points ." | BACKEND=claude_cli .venv/bin/python cli.py --auto-narrate
+
+# Hands-off one-shot (Ollama, free / local)
+echo "your rough points ." | BACKEND=ollama OLLAMA_MODEL=llama3.2 .venv/bin/python cli.py --auto-narrate
 ```
 
-Same flow, but:
-- Multi-line input ends with a single `.` on its own line.
-- Approve / edit / redraft is keyboard-driven.
-- "Edit in editor" opens the script in `$EDITOR` as a Markdown file with
-  one section per slide.
-- After approving the script the bot writes one `slide_NN.html` per
-  slide and lists them with their paths. Type a slide number to edit
-  that HTML in `$EDITOR`, `o` to open the slides folder in Finder, or
-  `d` to proceed to building the cue video.
-- After the cue is built, the bot prints the audio folder path and waits.
-  Record your files, save them into that folder, hit `r` to rescan.
-  When all are present, hit `f` to finalize.
-- Resume an existing job: `.venv/bin/python cli.py --resume <job_id>`
-  jumps straight to the audio stage.
-- Skip recording entirely: `.venv/bin/python cli.py --auto-narrate` runs
-  end-to-end with macOS `say` filling in every slide. Combine with
-  `--resume` to auto-narrate an existing job in one command.
-- At the audio prompt, `n` synthesises any missing slides with `say`; `a`
-  replaces every slide's audio with synthesis (asks first).
-
-### One-shot end-to-end (no clicks, no recording)
-
-Pipe rough points into the CLI with `--auto-narrate` and you get a
-finished MP4 in one command. Pick the backend with the `BACKEND` env
-var.
-
-**With a Claude Code subscription (best quality, no API key, no cost):**
-
-```bash
-cd /Users/rashmi/Documents/content
-echo "What is recursion?
-- a function that calls itself
-- needs a base case
-- the matryoshka / Russian-doll analogy
-- a brief example: factorial
-." | BACKEND=claude_cli .venv/bin/python cli.py --auto-narrate
-```
-
-Wall-clock: ~3–5 minutes for a 6-slide video. Output: `jobs/<id>/video.mp4`
-(opens automatically when done).
-
-**Fully free, local, no internet (Ollama):**
-
-```bash
-cd /Users/rashmi/Documents/content
-echo "What is recursion?
-- a function that calls itself
-- needs a base case
-- the matryoshka / Russian-doll analogy
-- a brief example: factorial
-." | BACKEND=ollama OLLAMA_MODEL=llama3.2 .venv/bin/python cli.py --auto-narrate
-```
-
-Wall-clock: ~8–15 minutes on Apple Silicon CPU (Ollama is slower than
-Claude's hosted inference, especially on the slide-design calls). Costs
-nothing. For better slide quality, pull and use a bigger model:
-
-```bash
-ollama pull qwen2.5:14b
-echo "your rough points here ." | \
-  BACKEND=ollama OLLAMA_MODEL=qwen2.5:14b .venv/bin/python cli.py --auto-narrate
-```
-
-**With any cloud key (Anthropic / OpenAI / Gemini …):**
-
-```bash
-.venv/bin/llm keys set claude        # one-time, paste your Anthropic key
-echo "your rough points here ." | \
-  BACKEND=llm LLM_MODEL=claude-sonnet-4-5 .venv/bin/python cli.py --auto-narrate
-```
-
-Substitute `LLM_MODEL=gpt-4.1` (OpenAI), `gemini-2.0-flash` (Gemini's
-generous free tier), or any model `.venv/bin/llm models` lists.
-
-In all three cases the bot:
-1. drafts a script + critique (1 reviewer pass)
-2. designs HTML for each slide
-3. screenshots slides via Playwright
-4. synthesises narration with macOS `say`
-5. assembles the final MP4
-
-No prompts, no clicks. The final video opens in QuickTime automatically.
-
-### Files you get per job
-
-After `build_cue` runs you have:
-
-```
-jobs/<job_id>/
-├── plan.json              # the approved script (used by build_final)
-├── slides/                # slide HTML + PNG screenshots
-├── audio/                 # drop your slide_NN.wav files here
-├── work/                  # ffmpeg intermediate files
-├── cue_video.mp4          # silent slideshow, estimated durations
-└── script.txt             # per-slide narration + timestamps + filename to record
-```
-
-After `build_final` runs you also get `jobs/<job_id>/video.mp4`.
-
-### Re-recording a single slide
-
-Just replace the file in `jobs/<job_id>/audio/` (delete the old one if the
-extension changes) and run finalize again — in the web UI, the table has a
-"Remove" button per slide; in the CLI, drop in a new file and hit `f`.
-
-### Smoke test
-
-Stand-in test that runs end-to-end without you having to actually record:
-
-```bash
-cd content
-.venv/bin/python smoke_test.py
-```
-
-It uses `say` as a placeholder voice so the test runs unattended. A real
-session would skip step `[3/4]` and use your own recordings instead.
-
-### Troubleshooting
-
-- **"claude CLI timed out"** — `claude -p "hi"` probably hangs at the auth
-  prompt. Run `claude` once interactively to log in, then retry.
-- **Slide content too low / runs off the screen** — regenerate the slide,
-  or edit `key_visual` to be more specific ("centered in the frame", "three
-  labeled circles in a row") and re-approve.
-- **"missing audio file for slide N"** — filenames must start with
-  `slide_NN` (zero-padded). The audio dir is shown in both UIs.
-- **Final video plays but slides are too long / short** — that's just the
-  audio length. Re-record that slide more tightly and re-finalize.
-
-### Cost / quota
-
-Each video uses roughly:
-- 1 writer call (~2 k output tokens)
-- 1 aesthetic-picker call (~200 tokens)
-- 1 critic call (~500 tokens)
-- N slide-design calls (~1 k tokens each), one per segment
-
-All routed through your Claude Code subscription. No API key is charged.
+See [USER_MANUAL.md](USER_MANUAL.md) for prerequisites, backend setup,
+slide-edit and audio-upload flows, and troubleshooting.
