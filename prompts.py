@@ -71,6 +71,43 @@ Produce a single self-contained HTML document with inline CSS that:
   - Has high contrast and large type, readable at video resolution.
   - Matches the chosen aesthetic faithfully.
 
+LAYOUT RULES (no element may overlap any other element):
+
+  L1. PARTITION the 1920x1080 frame into NON-OVERLAPPING regions. The strongest
+      tool is CSS Grid or Flexbox on a wrapping container; avoid `position:absolute`
+      except for purely decorative background elements that sit BEHIND all text
+      (use `z-index: 0` for decoration, `z-index: 1+` for text/diagrams).
+  L2. MINIMUM 80 px margin from every edge of the 1920x1080 frame. Nothing —
+      not text, not SVG, not background shapes — touches the outer edge.
+  L3. MINIMUM 40 px gap between any two distinct elements (title vs subtitle,
+      title vs diagram, label vs label, diagram vs caption, etc.).
+  L4. TITLE goes in its own row at the top, height 180–220 px, with the
+      key_visual filling the remaining vertical space below it. Never let the
+      key_visual extend up into the title row.
+  L5. LABELS for diagram parts must be PLACED OUTSIDE the shape they label
+      (above, below, or to the side, connected by a thin leader line if needed),
+      NEVER on top of the shape. If two labels would collide, move one to the
+      opposite side or stagger them vertically.
+  L6. TEXT must fit inside its container with at least 16 px padding on all
+      sides. Pick a font-size that lets the text fit without wrapping awkwardly;
+      shorten the text rather than shrinking the font below 28 px.
+  L7. SVG diagrams use the SVG `viewBox` for internal coordinates and an outer
+      `width` / `height` in pixels — don't let the SVG visually exceed its
+      reserved grid cell.
+  L8. NO `position:absolute` with hardcoded coordinates that depend on the
+      browser laying out other elements first. Either fully constrain with
+      grid/flex, or use `position:absolute` only for decoration in a known
+      sub-container.
+
+SELF-CHECK BEFORE EMITTING:
+  Walk through every visible element in your design. For each pair (A, B):
+    - Do their bounding boxes overlap visually? If yes, rework the layout.
+    - Is A within 40 px of B without a clear separator (whitespace, border,
+      different background)? If yes, increase the gap.
+  Then walk the frame edges (top, right, bottom, left). For each, the
+  nearest element must be at least 80 px away.
+  Only after the slide passes these checks, emit the HTML.
+
 Output ONLY the HTML, starting with <!doctype html>, no markdown fences, no commentary.
 """
 

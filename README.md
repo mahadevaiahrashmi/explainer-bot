@@ -368,6 +368,69 @@ Same flow, but:
 - At the audio prompt, `n` synthesises any missing slides with `say`; `a`
   replaces every slide's audio with synthesis (asks first).
 
+### One-shot end-to-end (no clicks, no recording)
+
+Pipe rough points into the CLI with `--auto-narrate` and you get a
+finished MP4 in one command. Pick the backend with the `BACKEND` env
+var.
+
+**With a Claude Code subscription (best quality, no API key, no cost):**
+
+```bash
+cd /Users/rashmi/Documents/content
+echo "What is recursion?
+- a function that calls itself
+- needs a base case
+- the matryoshka / Russian-doll analogy
+- a brief example: factorial
+." | BACKEND=claude_cli .venv/bin/python cli.py --auto-narrate
+```
+
+Wall-clock: ~3–5 minutes for a 6-slide video. Output: `jobs/<id>/video.mp4`
+(opens automatically when done).
+
+**Fully free, local, no internet (Ollama):**
+
+```bash
+cd /Users/rashmi/Documents/content
+echo "What is recursion?
+- a function that calls itself
+- needs a base case
+- the matryoshka / Russian-doll analogy
+- a brief example: factorial
+." | BACKEND=ollama OLLAMA_MODEL=llama3.2 .venv/bin/python cli.py --auto-narrate
+```
+
+Wall-clock: ~8–15 minutes on Apple Silicon CPU (Ollama is slower than
+Claude's hosted inference, especially on the slide-design calls). Costs
+nothing. For better slide quality, pull and use a bigger model:
+
+```bash
+ollama pull qwen2.5:14b
+echo "your rough points here ." | \
+  BACKEND=ollama OLLAMA_MODEL=qwen2.5:14b .venv/bin/python cli.py --auto-narrate
+```
+
+**With any cloud key (Anthropic / OpenAI / Gemini …):**
+
+```bash
+.venv/bin/llm keys set claude        # one-time, paste your Anthropic key
+echo "your rough points here ." | \
+  BACKEND=llm LLM_MODEL=claude-sonnet-4-5 .venv/bin/python cli.py --auto-narrate
+```
+
+Substitute `LLM_MODEL=gpt-4.1` (OpenAI), `gemini-2.0-flash` (Gemini's
+generous free tier), or any model `.venv/bin/llm models` lists.
+
+In all three cases the bot:
+1. drafts a script + critique (1 reviewer pass)
+2. designs HTML for each slide
+3. screenshots slides via Playwright
+4. synthesises narration with macOS `say`
+5. assembles the final MP4
+
+No prompts, no clicks. The final video opens in QuickTime automatically.
+
 ### Files you get per job
 
 After `build_cue` runs you have:
