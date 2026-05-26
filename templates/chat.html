@@ -105,7 +105,11 @@
   .slide-tabs button.active { background: var(--accent); color: #0d1117; border-color: var(--accent); font-weight: 600; }
   .slide-tabs button .pip-dirty { color: var(--warn); margin-left: 4px; }
   .slide-editor {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 12px;
+    /* Editor takes whatever's left; preview is capped at 600px wide so the
+       HTML textarea on the left actually has room to breathe. */
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 600px);
+    gap: 16px; margin-top: 12px;
   }
   @media (max-width: 900px) { .slide-editor { grid-template-columns: 1fr; } }
   textarea#slide-html {
@@ -117,8 +121,9 @@
   }
   .slide-preview-wrap {
     /* Fit-to-width box at 16:9; iframe inside is rendered at native 1920×1080
-       and CSS-scaled down by JS so the whole slide is always visible. */
-    width: 100%; aspect-ratio: 16/9;
+       and CSS-scaled down by JS so the whole slide is always visible.
+       max-width caps the preview even when the layout stacks vertically. */
+    width: 100%; max-width: 600px; aspect-ratio: 16/9;
     overflow: hidden;
     border: 1px solid var(--border); border-radius: 6px;
     background: white;
