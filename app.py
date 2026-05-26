@@ -17,17 +17,20 @@ from pipeline import (
     Aesthetic,
     JOBS_DIR,
     Segment,
+    VALID_BACKENDS,
     assemble_cue_video,
     audio_status,
     auto_narrate,
     build_cue,
     build_final,
+    current_backend_info,
     design_slides,
     draft_script,
     find_audio_for_slide,
     fix_slide,
     get_slide_html,
     screenshot_slides,
+    set_request_overrides,
     update_slide_html,
 )
 
@@ -45,6 +48,8 @@ JOBS: dict[str, dict[str, Any]] = {}   # in-process job state
 
 class ScriptRequest(BaseModel):
     rough_points: str
+    backend: str | None = None        # one of pipeline.VALID_BACKENDS, or None for default
+    model: str | None = None          # passed to ollama / llm backends; ignored for claude_cli
 
 
 class SegmentIn(BaseModel):
@@ -64,6 +69,8 @@ class CueRequest(BaseModel):
     topic: str
     aesthetic: AestheticIn
     segments: list[SegmentIn]
+    backend: str | None = None
+    model: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -75,12 +82,30 @@ async def index() -> str:
     return (TEMPLATES / "chat.html").read_text()
 
 
+@app.get("/backend")
+async def get_backend_info() -> dict[str, Any]:
+    """Tell the UI what backend is the current server-side default, plus the
+    list of valid backends. The UI uses this to populate the picker."""
+    try:
+        info = current_backend_info()
+    except Exception as e:
+        info = {"backend": None, "model": None, "source": "error", "error": str(e)}
+    return {**info, "valid_backends": list(VALID_BACKENDS)}
+
+
 @app.post("/script")
 async def post_script(req: ScriptRequest) -> dict[str, Any]:
     if not req.rough_points.strip():
         raise HTTPException(400, "rough_points cannot be empty")
     try:
+        set_request_overrides(req.backend, req.model)
         draft = await draft_script(req.rough_points)
+    except RuntimeError as e:
+        # Bad backend name → 400, not 500.
+        if "Unknown backend" in str(e):
+            raise HTTPException(400, str(e))
+        traceback.print_exc()
+        raise HTTPException(500, f"script generation failed: {e}")
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(500, f"script generation failed: {e}")
@@ -107,12 +132,17 @@ async def post_design(req: CueRequest) -> dict[str, Any]:
         "final_video": None,
     }
     try:
+        set_request_overrides(req.backend, req.model)
         aesthetic = Aesthetic(**req.aesthetic.model_dump())
         segments = [Segment(**s.model_dump()) for s in req.segments]
         result = await design_slides(
             req.topic, aesthetic, segments, job_id=job_id,
             progress_cb=lambda m: JOBS[job_id]["progress"].append(m),
         )
+        # Persist the picks so /render-cue & /slide-fix calls for this job
+        # inherit them without the UI having to re-send.
+        JOBS[job_id]["backend"] = req.backend
+        JOBS[job_id]["model"] = req.model
         JOBS[job_id]["status"] = "done"
         return {
             "job_id": result.job_id,
@@ -125,6 +155,14 @@ async def post_design(req: CueRequest) -> dict[str, Any]:
                 for i, (s, p) in enumerate(zip(segments, result.slide_html_paths))
             ],
         }
+    except RuntimeError as e:
+        if "Unknown backend" in str(e):
+            JOBS[job_id]["status"] = "error"
+            raise HTTPException(400, str(e))
+        traceback.print_exc()
+        JOBS[job_id]["status"] = "error"
+        JOBS[job_id]["error"] = str(e)
+        raise HTTPException(500, f"design failed: {e}")
     except Exception as e:
         traceback.print_exc()
         JOBS[job_id]["status"] = "error"
@@ -172,17 +210,25 @@ async def get_slide_png(job_id: str, index: int) -> FileResponse:
 class FixBody(BaseModel):
     issue: str
     rerender: bool = True
+    backend: str | None = None
+    model: str | None = None
 
 
 @app.post("/jobs/{job_id}/slide/{index}/fix")
 async def post_slide_fix(job_id: str, index: int, body: FixBody) -> dict[str, Any]:
-    """Ask Claude to fix a reported issue with this slide.
+    """Ask the LLM to fix a reported issue with this slide.
 
     Body: { issue: "title overlaps the diagram", rerender: true }
     Returns the new HTML so the editor can refresh.
     """
     if not body.issue.strip():
         raise HTTPException(400, "issue cannot be empty")
+    j = JOBS.get(job_id, {})
+    # Picker on this request beats job-stored picks beats server default.
+    set_request_overrides(
+        body.backend or j.get("backend"),
+        body.model or j.get("model"),
+    )
     try:
         new_html = await fix_slide(job_id, index, body.issue)
     except (FileNotFoundError, IndexError, ValueError) as e:
@@ -259,6 +305,7 @@ async def post_cue(req: CueRequest) -> dict[str, str]:
             JOBS[job_id]["progress"].append(msg)
 
         try:
+            set_request_overrides(req.backend, req.model)
             aesthetic = Aesthetic(**req.aesthetic.model_dump())
             segments = [Segment(**s.model_dump()) for s in req.segments]
             result = await build_cue(

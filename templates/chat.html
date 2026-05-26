@@ -125,6 +125,22 @@
     width: 1920px; height: 1080px; border: 0; display: block;
     background: white;
   }
+  .model-picker {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 14px; margin-bottom: 16px;
+    font-size: 13px;
+  }
+  .model-picker label { margin: 0; color: var(--muted); }
+  .model-picker select, .model-picker input[type="text"] {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 8px; font: inherit;
+  }
+  .model-picker input[type="text"] { width: 240px; }
+  .model-picker .badge {
+    margin-left: auto; color: var(--muted); font-size: 12px;
+  }
+  .model-picker .badge code { background: var(--bg); padding: 2px 6px; border-radius: 4px; }
 </style>
 </head>
 <body>
@@ -133,6 +149,20 @@
   <span class="sub">rough points → script → slide HTML → cue video → your voice → final video</span>
 </header>
 <main>
+
+  <!-- Model picker (visible across all stages) -->
+  <div class="model-picker">
+    <label for="picker-backend">Backend:</label>
+    <select id="picker-backend">
+      <option value="">(server default)</option>
+      <option value="claude_cli">claude_cli — Claude Code subscription</option>
+      <option value="ollama">ollama — local, free</option>
+      <option value="llm">llm — cloud key (Anthropic / OpenAI / Gemini / …)</option>
+    </select>
+    <label for="picker-model">Model:</label>
+    <input id="picker-model" type="text" placeholder="e.g. claude-sonnet-4-5, llama3.2, gpt-4.1" />
+    <span class="badge">Server default: <code id="picker-current">…</code></span>
+  </div>
 
   <!-- Stage 1: input -->
   <section id="stage-input" class="stage active">
@@ -305,6 +335,28 @@ let JOB_ID = null;
 let SLIDES = [];    // [{index, title, html, savedHtml, dirty, pngStale}]
 let CURRENT_SLIDE = 0;
 
+// ---- model picker --------------------------------------------------------
+function pickerOverrides() {
+  // Whatever is in the picker right now. Empty string -> server default.
+  return {
+    backend: $("#picker-backend").value || null,
+    model: $("#picker-model").value.trim() || null,
+  };
+}
+
+async function refreshBackendBadge() {
+  try {
+    const r = await fetch("/backend");
+    if (!r.ok) throw new Error(await r.text());
+    const j = await r.json();
+    const m = j.model ? `${j.backend}:${j.model}` : j.backend;
+    $("#picker-current").textContent = m + (j.source ? `  (${j.source})` : "");
+  } catch (e) {
+    $("#picker-current").textContent = "unknown";
+  }
+}
+refreshBackendBadge();
+
 // ------------------------------------------------------------------ stage 1
 $("#btn-script").addEventListener("click", async () => {
   const rough = $("#rough").value.trim();
@@ -314,7 +366,7 @@ $("#btn-script").addEventListener("click", async () => {
   try {
     const res = await fetch("/script", {
       method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ rough_points: rough })
+      body: JSON.stringify({ rough_points: rough, ...pickerOverrides() })
     });
     if (!res.ok) throw new Error(await res.text());
     SCRIPT = await res.json();
@@ -383,7 +435,8 @@ $("#btn-design").addEventListener("click", async () => {
     const res = await fetch("/design", {
       method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify({
-        topic: SCRIPT.topic, aesthetic: SCRIPT.aesthetic, segments: SCRIPT.segments
+        topic: SCRIPT.topic, aesthetic: SCRIPT.aesthetic, segments: SCRIPT.segments,
+        ...pickerOverrides()
       })
     });
     if (!res.ok) throw new Error(await res.text());
@@ -514,7 +567,7 @@ $("#btn-fix").addEventListener("click", async () => {
   try {
     const r = await fetch(`/jobs/${JOB_ID}/slide/${CURRENT_SLIDE}/fix`, {
       method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ issue, rerender: true })
+      body: JSON.stringify({ issue, rerender: true, ...pickerOverrides() })
     });
     if (!r.ok) throw new Error(await r.text());
     const data = await r.json();

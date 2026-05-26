@@ -44,6 +44,7 @@ The pipeline runs in two stages:
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import os
 import re
@@ -93,6 +94,30 @@ DEFAULT_OLLAMA_URL = "http://localhost:11434"
 LLM_TIMEOUT_S = CLAUDE_TIMEOUT_S   # kept as old name elsewhere; same value
 
 _BACKEND_CACHE: str | None = None
+
+# Per-request overrides. Set these in a request handler (or a CLI flag handler)
+# and every llm_call() in the same async context will honour them. Because we
+# use asyncio.create_task() for background jobs, the ContextVar snapshot is
+# preserved into those tasks too.
+_REQUEST_BACKEND: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "explainer_request_backend", default=None,
+)
+_REQUEST_MODEL: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "explainer_request_model", default=None,
+)
+
+
+def set_request_overrides(backend: str | None = None, model: str | None = None) -> None:
+    """Override the backend / model for the current async context only.
+
+    Pass empty / None to leave the default in effect. Call this at the start of
+    every request handler that wants to honour user-supplied picks.
+    """
+    b = (backend or "").strip().lower() or None
+    if b and b not in VALID_BACKENDS:
+        raise RuntimeError(f"Unknown backend {b!r}; pick one of {', '.join(VALID_BACKENDS)}.")
+    _REQUEST_BACKEND.set(b)
+    _REQUEST_MODEL.set((model or "").strip() or None)
 
 
 def _detect_backend() -> str:
@@ -144,15 +169,41 @@ def get_backend() -> str:
 
 
 async def llm_call(system_prompt: str, user_message: str) -> str:
-    """Dispatch to the configured backend. Returns the model's raw text reply."""
-    b = get_backend()
+    """Dispatch to the chosen backend. Returns the model's raw text reply.
+
+    The backend is the request-scoped override if set (see
+    `set_request_overrides`), otherwise the env-var-or-auto-detected default.
+    """
+    b = _REQUEST_BACKEND.get() or get_backend()
+    m = _REQUEST_MODEL.get()
     if b == "claude_cli":
         return await _call_claude_cli(system_prompt, user_message)
     if b == "ollama":
-        return await _call_ollama(system_prompt, user_message)
+        return await _call_ollama(system_prompt, user_message, model=m)
     if b == "llm":
-        return await _call_llm_cli(system_prompt, user_message)
+        return await _call_llm_cli(system_prompt, user_message, model=m)
     raise RuntimeError(f"unreachable: backend {b!r}")
+
+
+def current_backend_info() -> dict[str, str | None]:
+    """What backend / model would the next llm_call use, right now?"""
+    b = _REQUEST_BACKEND.get() or get_backend()
+    m = _REQUEST_MODEL.get()
+    if b == "claude_cli":
+        return {"backend": b, "model": None, "source": "request" if _REQUEST_BACKEND.get() else "auto"}
+    if b == "ollama":
+        return {
+            "backend": b,
+            "model": m or os.environ.get("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL),
+            "source": "request" if (m or _REQUEST_BACKEND.get()) else "env",
+        }
+    if b == "llm":
+        return {
+            "backend": b,
+            "model": m or os.environ.get("LLM_MODEL"),
+            "source": "request" if (m or _REQUEST_BACKEND.get()) else "env",
+        }
+    return {"backend": b, "model": None, "source": "unknown"}
 
 
 # Back-compat alias — old callers used pipeline.claude(...).
@@ -178,8 +229,8 @@ async def _call_claude_cli(system_prompt: str, user_message: str) -> str:
 
 # --- ollama backend --------------------------------------------------------
 
-async def _call_ollama(system_prompt: str, user_message: str) -> str:
-    model = os.environ.get("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL)
+async def _call_ollama(system_prompt: str, user_message: str, *, model: str | None = None) -> str:
+    model = model or os.environ.get("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL)
     url = os.environ.get("OLLAMA_URL", DEFAULT_OLLAMA_URL)
     payload = {
         "model": model,
@@ -218,9 +269,9 @@ def _llm_executable() -> str:
     raise RuntimeError("`llm` CLI not found. Run `uv sync` to install it.")
 
 
-async def _call_llm_cli(system_prompt: str, user_message: str) -> str:
+async def _call_llm_cli(system_prompt: str, user_message: str, *, model: str | None = None) -> str:
     args = [_llm_executable()]
-    model = os.environ.get("LLM_MODEL")
+    model = model or os.environ.get("LLM_MODEL")
     if model:
         args.extend(["-m", model])
     args.extend(["--system", system_prompt, user_message])
