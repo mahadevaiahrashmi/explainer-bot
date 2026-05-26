@@ -342,6 +342,122 @@ def _extract_json(text: str) -> Any:
     )
 
 
+_TITLE_KEYS     = ("title", "heading", "header", "name", "slide_title")
+_VISUAL_KEYS    = ("key_visual", "keyvisual", "visual", "image", "diagram",
+                   "description", "visual_description", "key_visual_description")
+_NARRATION_KEYS = ("narration", "script", "voiceover", "speech", "text",
+                   "body", "spoken", "narration_text")
+
+
+def _first(d: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    """Return the first value in `d` whose key matches `keys`, else None.
+
+    Match is case-insensitive on the dict keys.
+    """
+    lower = {k.lower(): v for k, v in d.items() if isinstance(k, str)}
+    for k in keys:
+        if k in lower:
+            return lower[k]
+    return None
+
+
+def _coerce_segments(raw: Any) -> list["Segment"]:
+    """Build a list[Segment] from whatever the writer returned.
+
+    Tolerates the common shapes that weaker models emit:
+      - aliased keys (`script` / `text` / `body` for narration;
+        `visual` / `description` for key_visual; `heading` for title)
+      - the whole thing wrapped in a dict (e.g. {"segments":[...]})
+      - missing keys filled with sensible defaults so the rest of the
+        pipeline can still run
+    Raises a clear error only if there isn't a single usable segment.
+    """
+    # Sometimes the model wraps the array: {"segments":[...]} or
+    # {"script":[...]} — unwrap those before iterating.
+    if isinstance(raw, dict):
+        for k in ("segments", "slides", "script", "items"):
+            v = raw.get(k)
+            if isinstance(v, list):
+                raw = v
+                break
+        else:
+            # Single segment as a dict? Wrap so it's still iterable.
+            raw = [raw]
+    if not isinstance(raw, list):
+        raise ValueError(
+            f"Expected the writer to return a list of segments, got "
+            f"{type(raw).__name__}. First 300 chars: {str(raw)[:300]!r}"
+        )
+
+    out: list[Segment] = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, dict):
+            # Sometimes the model emits ["text", "text", ...] — skip strings.
+            continue
+        title     = _first(item, _TITLE_KEYS)
+        visual    = _first(item, _VISUAL_KEYS)
+        narration = _first(item, _NARRATION_KEYS)
+        # Last resort: any string value at all becomes narration.
+        if narration is None:
+            string_vals = [v for v in item.values() if isinstance(v, str) and v.strip()]
+            if string_vals:
+                narration = max(string_vals, key=len)
+        if not (isinstance(title, str) and title.strip()) and \
+           not (isinstance(narration, str) and narration.strip()):
+            # No title AND no narration — useless segment, drop it.
+            continue
+        out.append(Segment(
+            title=str(title or f"Slide {i + 1}").strip(),
+            key_visual=str(visual or "An illustrative diagram for this slide").strip(),
+            narration=str(narration or title or "").strip(),
+        ))
+    if not out:
+        raise ValueError(
+            f"Writer returned no usable segments. The model likely didn't "
+            f"follow the JSON schema. Try a bigger Ollama model "
+            f"(e.g. qwen2.5:14b) or a different backend. "
+            f"Raw input: {str(raw)[:300]!r}"
+        )
+    return out
+
+
+_AESTHETIC_NAME_KEYS    = ("name", "title", "aesthetic", "style")
+_AESTHETIC_PAL_KEYS     = ("palette", "colors", "colours", "color_palette")
+_AESTHETIC_FONT_KEYS    = ("font_family", "font", "typeface", "fonts")
+_AESTHETIC_DESC_KEYS    = ("description", "desc", "rationale", "notes")
+
+
+def _coerce_aesthetic(aes: dict[str, Any]) -> "Aesthetic":
+    """Build an Aesthetic from a parsed dict, filling sensible defaults if
+    the model omitted fields. Accepts a few common key-name variants."""
+    name = _first(aes, _AESTHETIC_NAME_KEYS)
+    pal  = _first(aes, _AESTHETIC_PAL_KEYS)
+    font = _first(aes, _AESTHETIC_FONT_KEYS)
+    desc = _first(aes, _AESTHETIC_DESC_KEYS)
+
+    # Palette: accept list[str], or list[dict{hex|color}], or comma-string.
+    palette: list[str] = []
+    if isinstance(pal, list):
+        for entry in pal:
+            if isinstance(entry, str):
+                palette.append(entry)
+            elif isinstance(entry, dict):
+                v = _first(entry, ("hex", "color", "colour", "value"))
+                if isinstance(v, str):
+                    palette.append(v)
+    elif isinstance(pal, str):
+        palette = [p.strip() for p in pal.split(",") if p.strip()]
+    if not palette:
+        palette = ["#0d1117", "#e6edf3", "#58a6ff"]   # safe default
+
+    return Aesthetic(
+        name=str(name or "Default").strip(),
+        palette=palette,
+        font_family=str(font or "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif").strip(),
+        description=str(desc or "").strip(),
+    )
+
+
 def _coerce_critique(crit: dict[str, Any]) -> "Critique":
     """Build a Critique from a parsed dict, accepting a few shape variations
     that smaller models sometimes produce."""
@@ -478,18 +594,8 @@ async def draft_script(rough_points: str) -> ScriptDraft:
         claude(AESTHETIC_PICKER_PROMPT, aesthetic_user),
     )
 
-    seg_list = _extract_json(segments_raw)
-    segments = [
-        Segment(title=s["title"], key_visual=s["key_visual"], narration=s["narration"])
-        for s in seg_list
-    ]
-    aes = _extract_json_obj(aesthetic_raw, kind="aesthetic object")
-    aesthetic = Aesthetic(
-        name=aes["name"],
-        palette=list(aes["palette"]),
-        font_family=aes["font_family"],
-        description=aes["description"],
-    )
+    segments = _coerce_segments(_extract_json(segments_raw))
+    aesthetic = _coerce_aesthetic(_extract_json_obj(aesthetic_raw, kind="aesthetic object"))
 
     critic_user = "Script to review (JSON array of slide segments):\n\n" + json.dumps(
         [s.__dict__ for s in segments], indent=2
