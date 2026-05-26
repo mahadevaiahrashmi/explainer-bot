@@ -313,7 +313,9 @@ cd content
 
 Open <http://localhost:8000> and:
 
-1. **Type rough points** → "Draft script."
+1. **Type rough points** into the panel at the top → "Draft script."
+   (The rough-points panel stays visible on every stage — edit it and
+   click "Draft script" again at any point to redraft.)
 2. **Review the script + critique.** Edit any title / visual / narration in
    place. Click **"Approve script → design slides."**
 3. **Slide HTML appears.** A tab bar at the top lists every slide. Pick a

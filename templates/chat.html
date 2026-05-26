@@ -174,15 +174,15 @@
     <span class="badge">Server default: <code id="picker-current">…</code></span>
   </div>
 
-  <!-- Stage 1: input -->
-  <section id="stage-input" class="stage active">
-    <label for="rough">Give me rough points or a thought to explain.</label>
+  <!-- Rough-points input (persistent — visible on every stage) -->
+  <div class="panel" id="rough-panel">
+    <h3 style="margin:0 0 8px;">Rough points <span class="muted" style="font-weight:400;">— edit and click "Draft script" any time to redraft</span></h3>
     <textarea id="rough" placeholder="e.g. how a neural network learns, what entropy actually is, why sorting algorithms differ..."></textarea>
     <div class="row">
       <button id="btn-script">Draft script</button>
       <span class="muted" id="input-hint">Claude will write a narration, pick a slide aesthetic, and critique its own work (~30–60s).</span>
     </div>
-  </section>
+  </div>
 
   <!-- Stage 2: review script -->
   <section id="stage-review" class="stage">
@@ -205,7 +205,6 @@
 
     <div class="row">
       <button id="btn-design">Approve script → design slides</button>
-      <button class="secondary" id="btn-back-input">← Rewrite from rough points</button>
       <span class="muted" id="design-hint">Claude will write standalone HTML for each slide (~30–60s). You can edit any slide before the cue video is built.</span>
     </div>
   </section>
@@ -332,7 +331,8 @@ e.g. The second label is unreadable on the dark background." style="min-height:9
 
 <script>
 const $ = (sel) => document.querySelector(sel);
-const STAGES = ["stage-input", "stage-review", "stage-slides", "stage-record", "stage-final"];
+// Rough-points input is now a persistent panel; stage-input is gone.
+const STAGES = ["stage-review", "stage-slides", "stage-record", "stage-final"];
 function show(stageId) {
   for (const s of STAGES) document.getElementById(s).classList.toggle("active", s === stageId);
 }
@@ -388,6 +388,12 @@ refreshBackendBadge();
 $("#btn-script").addEventListener("click", async () => {
   const rough = $("#rough").value.trim();
   if (!rough) { alert("Type some rough points first."); return; }
+  // Mid-flow redraft: warn before discarding work in later stages.
+  if (JOB_ID && !confirm(
+    "This will draft a new script and abandon your current job " +
+    "(slide edits, recordings, etc. stay on disk under jobs/" + JOB_ID +
+    "/ but the UI will start fresh). Continue?"
+  )) return;
   const btn = $("#btn-script"); btn.disabled = true;
   $("#input-hint").textContent = "Drafting... 30–60s.";
   try {
@@ -451,7 +457,7 @@ function renderReview() {
   };
 }
 
-$("#btn-back-input").addEventListener("click", () => show("stage-input"));
+// (No "back to input" — rough-points panel is always visible at the top.)
 
 // ----------------------------------------------------------- stage 2.5: slides
 $("#btn-design").addEventListener("click", async () => {
@@ -817,7 +823,9 @@ async function pollFinal() {
 $("#btn-restart").addEventListener("click", () => {
   $("#rough").value = "";
   SCRIPT = null; JOB_ID = null; SLIDES = []; CURRENT_SLIDE = 0;
-  show("stage-input");
+  // No stage is active — only the persistent rough-points panel is shown.
+  show(null);
+  $("#rough").focus();
 });
 </script>
 </body>

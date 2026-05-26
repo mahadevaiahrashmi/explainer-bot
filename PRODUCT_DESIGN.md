@@ -109,10 +109,11 @@ generator. Fast, plain-English iteration on visual issues.
 
 ## 4. Information architecture
 
-The web UI is a single page with five sequential stages, gated by
-buttons. State persists in JS globals (`SCRIPT`, `JOB_ID`, `SLIDES`,
-`CURRENT_SLIDE`); reloading the page resets but the server's `jobs/`
-directory keeps every artifact.
+The web UI is a single page with four sequential output stages, gated
+by buttons, sitting under two persistent panels (model picker + rough-
+points input). State persists in JS globals (`SCRIPT`, `JOB_ID`,
+`SLIDES`, `CURRENT_SLIDE`); reloading the page resets but the server's
+`jobs/` directory keeps every artifact.
 
 ```
 ┌────────────────────────────────────────────────────────┐
@@ -120,10 +121,12 @@ directory keeps every artifact.
 ├────────────────────────────────────────────────────────┤
 │ Model picker  (backend dropdown • model input • badge) │ ← persistent
 ├────────────────────────────────────────────────────────┤
+│ Rough points  (textarea + "Draft script" button)       │ ← persistent
+├────────────────────────────────────────────────────────┤
 │                                                        │
-│   ONE of five stage sections at a time:                │
+│   ONE of four output stages at a time (or none on      │
+│   first load):                                         │
 │                                                        │
-│   • stage-input    rough-points textarea               │
 │   • stage-review   critique + editable segments        │
 │   • stage-slides   tabs + HTML editor + live preview   │
 │   • stage-record   cue video + script + audio upload   │
@@ -132,20 +135,27 @@ directory keeps every artifact.
 └────────────────────────────────────────────────────────┘
 ```
 
-Only one stage is `.active` at a time. The picker is always visible
-because changing it affects calls in every stage.
+On first load no stage is active — only the persistent panels show.
+Once the user clicks "Draft script", the review stage appears, and
+they can advance / go back through the four output stages. The picker
+and rough-points panels stay visible the whole time. Editing rough
+points + clicking "Draft script" from any stage starts a fresh job
+(with a confirm prompt if a job is in progress).
 
 ---
 
 ## 5. Stage-by-stage screens
 
-### 5.1 Stage 1 — Input
+### 5.1 Rough-points input (persistent, top of page)
 
-**Purpose**: capture the user's rough points.
+**Purpose**: capture the user's rough points — and keep them visible as
+context for the rest of the session, so the user can refine and
+redraft at any time without losing the original prompt.
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│ Give me rough points or a thought to explain.        │
+│ Rough points — edit and click "Draft script" any     │
+│ time to redraft                                      │
 │ ┌──────────────────────────────────────────────────┐ │
 │ │  (textarea, 180 px tall, placeholder shows       │ │
 │ │   three example topics)                          │ │
@@ -159,6 +169,13 @@ because changing it affects calls in every stage.
 ```
 
 **Decisions**:
+- **Persistent**: lives outside the stage system, visible on every
+  output stage. The user can scroll up at any point to remind themselves
+  what they asked for, edit, and redraft. This is the only way for a
+  user mid-flow to course-correct on the original brief.
+- **Confirm before redraft if a job is in progress**: a stray click on
+  "Draft script" while editing slides would otherwise abandon every
+  slide edit silently. Disk artifacts under `jobs/<old_id>/` survive.
 - Single textarea, no formatting toolbar. Bullet points work because
   the writer prompt handles them; no need to teach the user a syntax.
 - Button copy says what happens next, not "Submit".
@@ -457,8 +474,9 @@ Two patterns:
 
 ### 8.5 Empty states
 
-- **First load**: stage-input is the empty state. Placeholder text in
-  the textarea shows three example topics. No "Welcome" copy.
+- **First load**: only the model picker + rough-points panel show, with
+  placeholder text in the textarea suggesting three example topics. No
+  "Welcome" copy, no separate empty-state component.
 - **No slides yet**: stage-slides is unreachable until design completes.
   No empty-state-of-an-empty-state needed.
 
