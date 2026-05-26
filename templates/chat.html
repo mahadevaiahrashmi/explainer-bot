@@ -116,14 +116,19 @@
     white-space: pre; tab-size: 2;
   }
   .slide-preview-wrap {
-    width: 100%; max-height: 70vh; overflow: auto;
+    /* Fit-to-width box at 16:9; iframe inside is rendered at native 1920×1080
+       and CSS-scaled down by JS so the whole slide is always visible. */
+    width: 100%; aspect-ratio: 16/9;
+    overflow: hidden;
     border: 1px solid var(--border); border-radius: 6px;
     background: white;
+    position: relative;
   }
   iframe#slide-iframe {
-    /* Native 1920x1080 — no scaling. Container scrolls if narrower. */
     width: 1920px; height: 1080px; border: 0; display: block;
     background: white;
+    transform-origin: top left;
+    /* `transform: scale(...)` set by rescalePreview() in JS. */
   }
   .model-picker {
     display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
@@ -239,7 +244,7 @@ e.g. The second label is unreadable on the dark background." style="min-height:9
           </div>
         </div>
         <div class="slide-preview">
-          <div class="muted" style="margin-bottom:4px;">Live preview (native 1920×1080 — scroll to pan)</div>
+          <div class="muted" style="margin-bottom:4px;">Live preview (full slide scaled to fit; what you see is what gets screenshotted)</div>
           <div class="slide-preview-wrap">
             <iframe id="slide-iframe" sandbox="allow-same-origin"></iframe>
           </div>
@@ -343,6 +348,23 @@ function pickerOverrides() {
     model: $("#picker-model").value.trim() || null,
   };
 }
+
+// ---- live-preview rescaler ---------------------------------------------
+// The iframe always renders the slide at native 1920×1080. We CSS-scale it
+// to fit whatever width the preview wrapper currently has, so the whole
+// slide is always visible (no scrollbars, no clipping).
+function rescalePreview() {
+  const wrap = document.querySelector(".slide-preview-wrap");
+  const iframe = document.getElementById("slide-iframe");
+  if (!wrap || !iframe) return;
+  const w = wrap.clientWidth;
+  if (w <= 0) return;
+  const scale = w / 1920;
+  iframe.style.transform = `scale(${scale})`;
+}
+window.addEventListener("resize", rescalePreview);
+// Also run after layout settles on first load.
+requestAnimationFrame(rescalePreview);
 
 async function refreshBackendBadge() {
   try {
@@ -450,6 +472,8 @@ $("#btn-design").addEventListener("click", async () => {
     renderSlideTabs();
     selectSlide(0);
     show("stage-slides");
+    // After the stage becomes visible the wrapper has real width — rescale.
+    requestAnimationFrame(rescalePreview);
   } catch (e) {
     alert("Slide design failed:\n" + e.message);
   } finally {
@@ -458,7 +482,10 @@ $("#btn-design").addEventListener("click", async () => {
   }
 });
 
-$("#btn-back-slides").addEventListener("click", () => show("stage-slides"));
+$("#btn-back-slides").addEventListener("click", () => {
+  show("stage-slides");
+  requestAnimationFrame(rescalePreview);
+});
 
 function renderSlideTabs() {
   const tabs = $("#slide-tabs"); tabs.innerHTML = "";
@@ -490,6 +517,7 @@ function selectSlide(i) {
   $("#slide-saved").textContent = s.dirty ? " (unsaved edits)" : "";
   $("#slide-status").textContent = "";
   $("#slide-iframe").srcdoc = s.html;
+  requestAnimationFrame(rescalePreview);
   $("#slide-png-link").textContent = `slide_${String(i).padStart(2, "0")}.png`;
   $("#slide-png-link").href = `/jobs/${JOB_ID}/slide/${i}/png?t=${Date.now()}`;
   $("#slide-png-stale").style.display = s.pngStale ? "inline-block" : "none";
