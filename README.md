@@ -23,8 +23,20 @@ It runs in three stages:
 ```
 
 Both stages are available from a **web UI** and a **terminal UI**.
-All Claude calls go through your **Claude Code subscription** — no
-`ANTHROPIC_API_KEY` needed.
+
+The bot needs an LLM to write scripts and design slides. Pick any one of
+**three backends** — set `BACKEND` to choose, or let it auto-detect:
+
+1. **`claude_cli`** — your Claude Code subscription. No API key, no per-call
+   cost. Auto-selected if `claude` is on `PATH`. ✨ Recommended if you already
+   have Claude Code.
+2. **`ollama`** — fully local, free, no internet. Auto-selected if an Ollama
+   server is reachable. Quality varies by model.
+3. **`llm`** — provider-agnostic CLI; works with Anthropic, OpenAI, Gemini,
+   Mistral, Groq, etc. Requires an API key from one provider. Auto-selected
+   as a last resort.
+
+See [Backend configuration](#backend-configuration) below for setup of each.
 
 ---
 
@@ -39,7 +51,7 @@ All Claude calls go through your **Claude Code subscription** — no
 | File uploads         | **python-multipart**                      | FastAPI's required dep for `multipart/form-data`; used for per-slide audio uploads.          |
 | Web UI               | **Vanilla HTML + CSS + JS** (no build)    | Single `templates/chat.html`; deliberately no React/bundler — keeps the surface area small.  |
 | Terminal UI          | **stdlib only** (`argparse`, ANSI colours, `subprocess` to `$EDITOR`) | No `rich`/`textual` dep; the TUI is a thin, dependency-free wrapper around the pipeline. |
-| LLM                  | **Claude** via the local **`claude` CLI** | Routes every model call through the user's Claude Code subscription — no API key, no per-call cost. Swappable: replace `pipeline.claude()` to switch backends. |
+| LLM (pluggable)      | **3 backends:** `claude_cli` (Claude Code subscription) / `ollama` (free local) / `llm` (provider-agnostic CLI) | Single dispatch in `pipeline.llm_call()`. Auto-detects; set `BACKEND=` to force. Subscription path needs no API key; Ollama needs no internet; `llm` works with Anthropic/OpenAI/Gemini/Groq/... |
 | Slide rendering      | **Playwright** + **Chromium (headless)**  | Claude writes standalone HTML; the browser screenshots it. Deterministic and offline.        |
 | Voice (optional)     | **macOS `say`**                           | Built-in TTS for the auto-narrate fallback. No cloud TTS bills; primary flow is user-recorded human voice. |
 | Video assembly       | **ffmpeg** + **ffprobe**                  | Per-slide clip (image + audio) → concat → MP4. No libass / `subtitles=` filter, so stock Homebrew ffmpeg works. |
@@ -95,10 +107,18 @@ shape of the video before you decide which slides to re-record.
 
 ### What does it cost?
 
-Nothing per video, beyond the Claude Code subscription you already have.
-The bot uses the `claude` CLI under the hood, so the script-writing,
-critique, and slide-design calls count against your normal subscription
-allowance, not a paid API account.
+Depends on the backend you pick:
+
+- **Claude Code subscription** → nothing per video. The bot's script-writing,
+  critique, and slide-design calls count against your normal subscription
+  allowance, not a paid API account.
+- **Ollama (local)** → nothing per video, no internet needed. The cost is in
+  your computer's RAM and time — bigger models give better slides but take
+  longer.
+- **Cloud API key (via `llm`)** → pay per token. A typical 6-slide video is
+  ~5 model calls and costs roughly $0.02–$0.05 on Claude Sonnet at current
+  pricing, less on smaller models, and the free tiers on Gemini are usually
+  enough for occasional use.
 
 ---
 
@@ -210,7 +230,9 @@ fresh process (e.g. from `cli.py --resume <id>`).
 
 ### One-time setup
 
-You need macOS, Homebrew, and Claude Code installed and logged in.
+You need macOS, Homebrew, and **one** of the three LLM backends (see
+[Backend configuration](#backend-configuration) for details — Claude Code,
+Ollama, or any cloud key via `llm`).
 
 ```bash
 brew install ffmpeg
@@ -220,11 +242,64 @@ uv sync
 .venv/bin/playwright install chromium
 ```
 
-Verify the `claude` CLI is reachable:
+Verify the chosen backend is wired up:
 
 ```bash
-claude -p "say hello"
+.venv/bin/python -c "import pipeline, asyncio; print('backend =', pipeline.get_backend()); \
+    asyncio.run(pipeline.llm_call('Reply with exactly OK.', 'go')) and print('reply ok')"
 ```
+
+### Backend configuration
+
+`BACKEND=` (env var) picks which one to use. Unset = auto-detect, preferring
+`claude_cli` → `ollama` → `llm` in that order.
+
+#### Backend 1 — `claude_cli` (Claude Code subscription, no API key)
+
+Already installed Claude Code? You're done. The bot detects the `claude`
+binary and uses your subscription. Verify with `claude --version`.
+
+```bash
+export BACKEND=claude_cli   # optional; auto-detected anyway
+```
+
+#### Backend 2 — `ollama` (free, local, no internet)
+
+```bash
+brew install ollama
+ollama serve &              # start the daemon in another shell or as a service
+ollama pull llama3.2        # ~2 GB; or qwen2.5:14b (~9 GB) for better quality
+export BACKEND=ollama
+export OLLAMA_MODEL=llama3.2          # default
+# export OLLAMA_URL=http://localhost:11434    # default
+```
+
+Slide design and the critic prompt benefit a lot from a bigger model;
+`qwen2.5:14b` or `llama3.3:70b` are noticeably better than `llama3.2`.
+Trade-off: a single slide-design call on a laptop CPU is 30–90 s with a 14B
+model.
+
+#### Backend 3 — `llm` (cloud API key — Anthropic / OpenAI / Gemini / …)
+
+The `llm` CLI is already in our dependencies. Pick a provider and set its
+key:
+
+```bash
+# Pick one:
+.venv/bin/llm keys set claude        # Anthropic API key  (paste when prompted)
+.venv/bin/llm keys set openai        # OpenAI API key
+.venv/bin/llm keys set gemini        # Gemini API key (free tier)
+
+# Pick the model — anything llm knows about:
+export BACKEND=llm
+export LLM_MODEL=claude-sonnet-4-5           # Anthropic
+# export LLM_MODEL=gpt-4.1                   # OpenAI
+# export LLM_MODEL=gemini-2.0-flash          # Gemini (has a free tier)
+```
+
+`.venv/bin/llm models` lists every model your installed plugins know about.
+Cost: depends on the provider's pricing per token. Quality: depends on the
+model; Claude-Sonnet ≥ GPT-4.1 ≈ Gemini-2.0 for this task.
 
 ### Web UI
 

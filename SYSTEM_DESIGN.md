@@ -143,10 +143,13 @@ narrow responsibility.
 
 ### 3.1 `pipeline.py` invariants
 
-- All Claude calls go through one wrapper: `pipeline.claude(system_prompt,
-  user_message) → str`. This is the **only** integration point with the
-  LLM. To swap the `claude` CLI for the Anthropic SDK or a different
-  backend, change this function alone.
+- All model calls go through one wrapper: `pipeline.llm_call(system_prompt,
+  user_message) → str` (alias: `pipeline.claude` for back-compat). This is
+  the **only** integration point with any LLM. The wrapper dispatches to
+  one of three concrete backends — `_call_claude_cli`, `_call_ollama`,
+  `_call_llm_cli` — based on the `BACKEND` env var or auto-detection. To
+  add a fourth backend, add a `_call_<name>` coroutine and one line in
+  `llm_call`'s if-tree.
 - All ffmpeg invocations go through `_build_silent_clip` /
   `_build_voiced_clip` / `_concat_clips`. The shape of those calls
   (constant flags, no global state) is the reason we don't need
@@ -484,7 +487,7 @@ Streams `video.mp4`. Same headers as `/cue`.
 ### 6.1 Script generation
 
 ```
-User           Chat UI        FastAPI         pipeline.draft_script        claude CLI
+User           Chat UI        FastAPI         pipeline.draft_script        LLM backend
  │  type points  │                │                       │                      │
  │──────────────►│ POST /script   │                       │                      │
  │               │───────────────►│                       │                      │
@@ -579,7 +582,10 @@ User       Chat UI       FastAPI            build_final          ffprobe   ffmpe
 
 | Dependency        | Used by                | Required at      | Auth                              |
 | ----------------- | ---------------------- | ---------------- | --------------------------------- |
-| `claude` CLI      | every `pipeline.claude` | runtime          | Claude Code login (subscription)  |
+| **ONE of:**       | every `pipeline.llm_call` (the dispatcher) | runtime    | one of the three options below    |
+| `claude` CLI      | `_call_claude_cli`     | runtime, opt'l   | Claude Code login (subscription)  |
+| Ollama server     | `_call_ollama`         | runtime, opt'l   | none — local                      |
+| `llm` CLI         | `_call_llm_cli`        | runtime, opt'l   | provider key set via `llm keys set <provider>` |
 | `ffmpeg` (PATH)   | both stages of pipeline | runtime          | none                              |
 | `ffprobe` (PATH)  | both stages of pipeline | runtime          | none                              |
 | `say` (macOS)     | `auto_narrate` only    | runtime, opt'l   | none — macOS built-in             |
@@ -597,9 +603,12 @@ all other tools are local processes.
 
 | Failure                                      | Where surfaced                              | Recovery                                                                                                   |
 | -------------------------------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `claude` CLI not logged in                   | `RuntimeError` from `pipeline.claude`       | Run `claude` interactively once to authenticate, then retry. Surfaced to UI as job error.                  |
-| `claude` returns non-JSON or malformed JSON  | `ValueError` from `_extract_json`           | Fence-strip then balanced-block fallback; if both fail, job fails with the offending output in the message. |
-| Claude exceeds 240 s                         | `RuntimeError` from `pipeline.claude`       | Job fails; user can click "Draft script" again.                                                            |
+| No LLM backend reachable                     | `RuntimeError` from `_detect_backend`       | Install one: Claude Code, Ollama, or `llm keys set <provider>`. Error message lists the three options.    |
+| `claude` CLI not logged in                   | `RuntimeError` from `_call_claude_cli`      | Run `claude` interactively once to authenticate, then retry.                                              |
+| Ollama server not running / model not pulled | `RuntimeError` from `_call_ollama`          | `ollama serve` + `ollama pull <model>` (default `llama3.2`).                                              |
+| `llm` CLI key not configured                 | `RuntimeError` from `_call_llm_cli` with hint | `llm keys set <provider>`; set `LLM_MODEL` to a model that provider supports.                            |
+| Model returns non-JSON or malformed JSON     | `ValueError` from `_extract_json`           | Fence-strip then balanced-block fallback; if both fail, job fails with the offending output. Smaller models (esp. Ollama small) are the most likely culprit. |
+| Model exceeds 240 s                          | `RuntimeError` from the relevant backend    | Job fails; user retries. Common with large local Ollama models on CPU.                                    |
 | Slide HTML references remote asset           | Playwright `set_content` may hang or error  | The slide-designer prompt explicitly forbids external assets; if it slips through, the screenshot still works (assets fail silently in chromium). |
 | Audio file with wrong stem                   | `audio_status` reports `have_audio: false`  | Rename file to `slide_NN.<ext>` and re-poll.                                                               |
 | `ffmpeg` missing                             | `FileNotFoundError` from subprocess         | Surfaced to UI; user installs Homebrew ffmpeg.                                                             |
@@ -638,17 +647,27 @@ This is a single-user, single-machine tool. The hard limits are:
 
 These are the "why this, not that" calls that shaped the system.
 
-### 10.1 `claude` CLI subprocess, not the Anthropic SDK
-- **Decision**: every model call goes through `subprocess.exec("claude",
-  "-p", ...)`.
-- **Why**: lets the tool run against the user's Claude Code subscription
-  with no `ANTHROPIC_API_KEY` and zero marginal cost per video.
-- **Trade-off**: ~2 s CLI startup per call. For ~3–6 calls per video
-  that's negligible. If we ever need true streaming or thousands of
-  calls per session, swap the `pipeline.claude` function for the SDK.
-- **Alternative considered**: anthropic-python SDK. Rejected because it
-  would require the user to fund an API account in addition to their
-  existing subscription.
+### 10.1 Three pluggable backends, dispatched at runtime
+- **Decision**: `pipeline.llm_call` dispatches to one of three concrete
+  backends — `claude_cli` (subprocess to `claude -p`), `ollama` (HTTP
+  POST to a local server), or `llm` (subprocess to the `llm` CLI). The
+  pick is `BACKEND` env var, defaulting to the first one that's
+  available (`claude_cli` → `ollama` → `llm`).
+- **Why**: different users have different access. Claude Code
+  subscribers want subscription-billed calls with no API key. Privacy-
+  or cost-sensitive users want fully local Ollama. Users without either
+  want to bring their own API key for any provider via `llm`. One
+  pipeline supports all three with no code change.
+- **Trade-off**: 2 s subprocess startup for `claude_cli` and `llm`;
+  Ollama is HTTP and faster but quality depends on the local model.
+  None of these support true streaming — we wait for the full response.
+  For ~3–6 calls per video that's fine. If we ever need streaming or
+  thousands of calls per session, the Anthropic / OpenAI / Vertex SDKs
+  would slot in as `_call_<sdk>_anthropic` etc.
+- **Alternative considered**: hard-code one provider's SDK. Rejected
+  because the project audience spans people with a Claude subscription,
+  people with no API key at all (Ollama), and people who already pay
+  another provider — and we don't want to fragment the project.
 
 ### 10.2 Two stages with a disk handoff (not one monolithic build)
 - **Decision**: `build_cue` writes `plan.json` and `slides/` and stops;

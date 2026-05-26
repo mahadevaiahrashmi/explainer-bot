@@ -274,7 +274,11 @@ works.
 - **Output of**:
   ```bash
   cd /Users/rashmi/Documents/content
-  claude --version
+  echo "BACKEND=${BACKEND:-(auto)}  LLM_MODEL=${LLM_MODEL:-(unset)}  OLLAMA_MODEL=${OLLAMA_MODEL:-(unset)}"
+  .venv/bin/python -c "import pipeline; print('resolved backend =', pipeline.get_backend())"
+  claude --version 2>/dev/null   || echo "claude CLI: not installed"
+  .venv/bin/llm --version 2>/dev/null || echo "llm CLI: not installed"
+  ollama --version 2>/dev/null   || echo "ollama: not installed"
   ffmpeg -version | head -1
   .venv/bin/python -c "import playwright, fastapi, sys; print(sys.version)"
   ```

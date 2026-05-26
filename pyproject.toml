@@ -10,6 +10,9 @@ dependencies = [
     "playwright>=1.49",
     "pydantic>=2.9",
     "python-multipart>=0.0.20",
+    "httpx>=0.27",      # used to talk to Ollama, and as the `llm` cloud backend
+    "llm>=0.19",        # provider-agnostic CLI used by the "llm" backend
+    "llm-anthropic",    # Anthropic plugin for `llm` so cloud Claude works out of the box
 ]
 
 [tool.uv]

@@ -1,10 +1,27 @@
 """End-to-end pipeline: rough points -> cue video -> audio -> final video.
 
-External dependencies (must be on PATH):
-  - claude       (Claude Code CLI; uses your subscription, no API key)
-  - ffmpeg / ffprobe
-  - say          (macOS built-in TTS, used by auto-narrate only)
-And the playwright python package + chromium browser.
+External dependencies:
+  - ffmpeg / ffprobe                      (required, on PATH)
+  - say                                   (macOS built-in TTS, optional, only
+                                            used by auto_narrate)
+  - playwright + chromium                 (python package + browser)
+  - ONE of three LLM backends             (auto-detected, see below)
+
+LLM backends (controlled by ``BACKEND`` env var, default: auto-detect):
+
+  ``claude_cli``  — shells out to ``claude -p``. Uses the user's Claude Code
+                    subscription, no API key needed. Preferred default if
+                    ``claude`` is on PATH.
+
+  ``ollama``      — POSTs to ``OLLAMA_URL`` (default http://localhost:11434).
+                    Free, local, no internet. Pick the model with
+                    ``OLLAMA_MODEL`` (default ``llama3.2``).
+
+  ``llm``         — shells out to ``llm -m $LLM_MODEL``. Provider-agnostic
+                    CLI from Simon Willison. Default model picked by your
+                    ``llm`` configuration. Set ``LLM_MODEL=claude-sonnet-4-5``
+                    (or ``gpt-4.1``, ``gemini-2.0-flash``, ...) to override.
+                    Requires you've run ``llm keys set <provider>``.
 
 The pipeline runs in two stages:
 
@@ -28,15 +45,18 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import shutil
 import subprocess
+import sys
 import textwrap
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+import httpx
 from playwright.async_api import async_playwright
 
 from prompts import (
@@ -59,27 +79,167 @@ SLIDE_TAIL_PAD_S = 1.0      # quiet padding at the end of each slide
 
 
 # ---------------------------------------------------------------------------
-# Claude CLI wrapper
+# LLM backend dispatch — three options:
+#   1) claude_cli  (Claude Code subscription, no API key)
+#   2) ollama      (local, free, no internet)
+#   3) llm         (provider-agnostic; cloud API key required)
+#
+# Picked by ``BACKEND`` env var, otherwise auto-detected on first call.
 # ---------------------------------------------------------------------------
 
-async def claude(system_prompt: str, user_message: str) -> str:
-    """Call the local `claude` CLI non-interactively. Returns raw stdout text."""
+VALID_BACKENDS = ("claude_cli", "ollama", "llm")
+DEFAULT_OLLAMA_MODEL = "llama3.2"
+DEFAULT_OLLAMA_URL = "http://localhost:11434"
+LLM_TIMEOUT_S = CLAUDE_TIMEOUT_S   # kept as old name elsewhere; same value
+
+_BACKEND_CACHE: str | None = None
+
+
+def _detect_backend() -> str:
+    """Pick a backend automatically. Preference order:
+        claude_cli  →  ollama (if server reachable)  →  llm
+    """
+    if shutil.which("claude"):
+        return "claude_cli"
+    if _ollama_reachable():
+        return "ollama"
+    if shutil.which("llm") or (Path(sys.executable).parent / "llm").exists():
+        return "llm"
+    raise RuntimeError(
+        "No LLM backend available. Install ONE of:\n"
+        "  • Claude Code      (gives you `claude` CLI; uses your subscription)\n"
+        "                     https://claude.com/code\n"
+        "  • Ollama           (free, local, no internet)\n"
+        "                     brew install ollama && ollama pull llama3.2\n"
+        "                     ollama serve\n"
+        "  • An API-key path  (any provider via the `llm` CLI — already in our deps)\n"
+        "                     llm keys set claude     # or openai, gemini, etc.\n"
+        "                     export LLM_MODEL=claude-sonnet-4-5\n"
+        "Then re-run.  You can also force one with BACKEND=claude_cli|ollama|llm."
+    )
+
+
+def _ollama_reachable() -> bool:
+    url = os.environ.get("OLLAMA_URL", DEFAULT_OLLAMA_URL)
+    try:
+        with httpx.Client(timeout=0.4) as client:
+            r = client.get(f"{url}/api/tags")
+            return r.status_code == 200
+    except Exception:
+        return False
+
+
+def get_backend() -> str:
+    """Return the resolved backend name, caching the first decision."""
+    global _BACKEND_CACHE
+    if _BACKEND_CACHE:
+        return _BACKEND_CACHE
+    chosen = (os.environ.get("BACKEND") or "").lower().strip()
+    if chosen and chosen not in VALID_BACKENDS:
+        raise RuntimeError(
+            f"Unknown BACKEND={chosen!r}. Pick one of: {', '.join(VALID_BACKENDS)}."
+        )
+    _BACKEND_CACHE = chosen or _detect_backend()
+    return _BACKEND_CACHE
+
+
+async def llm_call(system_prompt: str, user_message: str) -> str:
+    """Dispatch to the configured backend. Returns the model's raw text reply."""
+    b = get_backend()
+    if b == "claude_cli":
+        return await _call_claude_cli(system_prompt, user_message)
+    if b == "ollama":
+        return await _call_ollama(system_prompt, user_message)
+    if b == "llm":
+        return await _call_llm_cli(system_prompt, user_message)
+    raise RuntimeError(f"unreachable: backend {b!r}")
+
+
+# Back-compat alias — old callers used pipeline.claude(...).
+claude = llm_call
+
+
+# --- claude_cli backend ----------------------------------------------------
+
+async def _call_claude_cli(system_prompt: str, user_message: str) -> str:
     proc = await asyncio.create_subprocess_exec(
-        "claude",
-        "-p",
-        "--append-system-prompt",
-        system_prompt,
-        user_message,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+        "claude", "-p", "--append-system-prompt", system_prompt, user_message,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
     )
     try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=CLAUDE_TIMEOUT_S)
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=LLM_TIMEOUT_S)
     except asyncio.TimeoutError:
         proc.kill()
-        raise RuntimeError(f"claude CLI timed out after {CLAUDE_TIMEOUT_S}s")
+        raise RuntimeError(f"claude CLI timed out after {LLM_TIMEOUT_S}s")
     if proc.returncode != 0:
         raise RuntimeError(f"claude CLI failed: {stderr.decode(errors='replace')[:500]}")
+    return stdout.decode(errors="replace").strip()
+
+
+# --- ollama backend --------------------------------------------------------
+
+async def _call_ollama(system_prompt: str, user_message: str) -> str:
+    model = os.environ.get("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL)
+    url = os.environ.get("OLLAMA_URL", DEFAULT_OLLAMA_URL)
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ],
+        "stream": False,
+        # Lower temperature gives the JSON-output prompts a better chance.
+        "options": {"temperature": 0.4},
+    }
+    try:
+        async with httpx.AsyncClient(timeout=LLM_TIMEOUT_S) as client:
+            r = await client.post(f"{url}/api/chat", json=payload)
+    except httpx.RequestError as e:
+        raise RuntimeError(
+            f"Ollama at {url} unreachable ({e}). Is `ollama serve` running, "
+            f"and is OLLAMA_MODEL={model} pulled? `ollama pull {model}`"
+        )
+    if r.status_code != 200:
+        raise RuntimeError(f"Ollama {r.status_code}: {r.text[:500]}")
+    data = r.json()
+    return (data.get("message", {}).get("content") or "").strip()
+
+
+# --- llm CLI backend -------------------------------------------------------
+
+def _llm_executable() -> str:
+    """Prefer the venv-local llm so the bundled llm-anthropic plugin is found."""
+    candidate = Path(sys.executable).parent / "llm"
+    if candidate.exists():
+        return str(candidate)
+    found = shutil.which("llm")
+    if found:
+        return found
+    raise RuntimeError("`llm` CLI not found. Run `uv sync` to install it.")
+
+
+async def _call_llm_cli(system_prompt: str, user_message: str) -> str:
+    args = [_llm_executable()]
+    model = os.environ.get("LLM_MODEL")
+    if model:
+        args.extend(["-m", model])
+    args.extend(["--system", system_prompt, user_message])
+    proc = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=LLM_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        proc.kill()
+        raise RuntimeError(f"`llm` CLI timed out after {LLM_TIMEOUT_S}s")
+    if proc.returncode != 0:
+        msg = stderr.decode(errors="replace")[:500]
+        hint = ""
+        if "key" in msg.lower():
+            hint = ("\nHint: run `llm keys set <provider>` (e.g. `llm keys set claude` "
+                    "for Anthropic) and set LLM_MODEL to a supported model.")
+        raise RuntimeError(f"`llm` CLI failed: {msg}{hint}")
     return stdout.decode(errors="replace").strip()
 
 
