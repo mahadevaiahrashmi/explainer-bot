@@ -302,16 +302,28 @@ def _strip_fences(text: str) -> str:
 
 
 def _extract_json(text: str) -> Any:
-    """Best-effort JSON extraction. Falls back to the first balanced block."""
+    """Best-effort JSON extraction. Returns whatever JSON the model produced.
+
+    Strategy:
+      1. Try to parse the whole (de-fenced) text.
+      2. Otherwise find the first occurrence of `{` or `[` (whichever is
+         leftmost) and parse the balanced block starting there. Keeps trying
+         later candidates if a balanced block fails to parse.
+    """
     text = _strip_fences(text)
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
-    for opener, closer in (("[", "]"), ("{", "}")):
-        start = text.find(opener)
-        if start == -1:
-            continue
+    # All candidate opener positions, earliest first.
+    candidates: list[tuple[int, str, str]] = []
+    for opener, closer in (("{", "}"), ("[", "]")):
+        idx = text.find(opener)
+        if idx != -1:
+            candidates.append((idx, opener, closer))
+    candidates.sort()  # earliest position wins, e.g. "{...}" before "[...]"
+    last_err: Exception | None = None
+    for start, opener, closer in candidates:
         depth = 0
         for i in range(start, len(text)):
             if text[i] == opener:
@@ -319,8 +331,83 @@ def _extract_json(text: str) -> Any:
             elif text[i] == closer:
                 depth -= 1
                 if depth == 0:
-                    return json.loads(text[start : i + 1])
-    raise ValueError(f"Could not parse JSON from model output: {text[:300]}")
+                    try:
+                        return json.loads(text[start : i + 1])
+                    except json.JSONDecodeError as e:
+                        last_err = e
+                        break  # try the next candidate
+    raise ValueError(
+        f"Could not parse JSON from model output (last error: {last_err}). "
+        f"First 300 chars: {text[:300]!r}"
+    )
+
+
+def _coerce_critique(crit: dict[str, Any]) -> "Critique":
+    """Build a Critique from a parsed dict, accepting a few shape variations
+    that smaller models sometimes produce."""
+    # `scores` should be a dict; some models emit a list like
+    # [{"understandability":4}, {"analogies":5}, {"wonder":4}] — flatten it.
+    raw_scores = crit.get("scores", {})
+    if isinstance(raw_scores, list):
+        flat: dict[str, int] = {}
+        for item in raw_scores:
+            if isinstance(item, dict):
+                flat.update(item)
+        raw_scores = flat
+    if not isinstance(raw_scores, dict):
+        raise ValueError(f"Critique `scores` should be a dict, got {type(raw_scores).__name__}: {raw_scores!r}")
+    # Coerce values to int (models occasionally return "4/5" or "4").
+    scores: dict[str, int] = {}
+    for k, v in raw_scores.items():
+        if isinstance(v, str):
+            # Pull the first integer-looking token.
+            m = re.search(r"\d+", v)
+            v = int(m.group()) if m else 0
+        try:
+            scores[str(k)] = int(v)
+        except (TypeError, ValueError):
+            scores[str(k)] = 0
+
+    verdict = str(crit.get("verdict", "revise")).strip().lower()
+    if verdict not in ("approve", "revise"):
+        # Map common variants.
+        verdict = "approve" if verdict.startswith("appr") else "revise"
+
+    notes_raw = crit.get("notes", [])
+    if isinstance(notes_raw, str):
+        notes = [notes_raw]
+    elif isinstance(notes_raw, list):
+        notes = [str(n) for n in notes_raw]
+    else:
+        notes = [str(notes_raw)]
+
+    return Critique(scores=scores, verdict=verdict, notes=notes)
+
+
+def _extract_json_obj(text: str, *, kind: str = "object") -> dict[str, Any]:
+    """Like _extract_json but enforces a JSON object.
+
+    Small / weaker models sometimes wrap their output in a single-element
+    list (`[{...}]`) even when the schema asked for `{...}`. We unwrap
+    that case quietly. Anything else that isn't a dict raises a clear
+    error pointing at the model output.
+    """
+    data = _extract_json(text)
+    if isinstance(data, list):
+        if len(data) == 1 and isinstance(data[0], dict):
+            return data[0]
+        raise ValueError(
+            f"Expected JSON {kind} from the model, got a list of {len(data)} "
+            f"items. The model likely doesn't follow JSON-object schemas — "
+            f"try a bigger Ollama model (e.g. qwen2.5:14b) or a different "
+            f"backend. First 300 chars: {str(data)[:300]!r}"
+        )
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"Expected JSON {kind} from the model, got {type(data).__name__}. "
+            f"First 300 chars: {str(data)[:300]!r}"
+        )
+    return data
 
 
 # ---------------------------------------------------------------------------
@@ -396,7 +483,7 @@ async def draft_script(rough_points: str) -> ScriptDraft:
         Segment(title=s["title"], key_visual=s["key_visual"], narration=s["narration"])
         for s in seg_list
     ]
-    aes = _extract_json(aesthetic_raw)
+    aes = _extract_json_obj(aesthetic_raw, kind="aesthetic object")
     aesthetic = Aesthetic(
         name=aes["name"],
         palette=list(aes["palette"]),
@@ -408,12 +495,8 @@ async def draft_script(rough_points: str) -> ScriptDraft:
         [s.__dict__ for s in segments], indent=2
     )
     critique_raw = await claude(CRITIC_PROMPT, critic_user)
-    crit = _extract_json(critique_raw)
-    critique = Critique(
-        scores=dict(crit["scores"]),
-        verdict=str(crit["verdict"]),
-        notes=list(crit["notes"]),
-    )
+    crit = _extract_json_obj(critique_raw, kind="critique object")
+    critique = _coerce_critique(crit)
 
     return ScriptDraft(topic=topic_line, segments=segments, critique=critique, aesthetic=aesthetic)
 
