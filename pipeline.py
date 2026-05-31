@@ -88,7 +88,7 @@ SLIDE_TAIL_PAD_S = 1.0      # quiet padding at the end of each slide
 # Picked by ``BACKEND`` env var, otherwise auto-detected on first call.
 # ---------------------------------------------------------------------------
 
-VALID_BACKENDS = ("claude_cli", "ollama", "llm")
+VALID_BACKENDS = ("claude_cli", "codex_cli", "gemini_cli", "ollama", "llm")
 DEFAULT_OLLAMA_MODEL = "llama3.2"
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
 LLM_TIMEOUT_S = CLAUDE_TIMEOUT_S   # kept as old name elsewhere; same value
@@ -122,10 +122,18 @@ def set_request_overrides(backend: str | None = None, model: str | None = None) 
 
 def _detect_backend() -> str:
     """Pick a backend automatically. Preference order:
-        claude_cli  →  ollama (if server reachable)  →  llm
+        claude_cli → codex_cli → gemini_cli → ollama → llm
+
+    Reasoning: subscription-bundled CLIs first (free at point of use, no API
+    key), then local Ollama (free but needs a running daemon), then the
+    paid-API catch-all via `llm`.
     """
     if shutil.which("claude"):
         return "claude_cli"
+    if shutil.which("codex"):
+        return "codex_cli"
+    if shutil.which("gemini"):
+        return "gemini_cli"
     if _ollama_reachable():
         return "ollama"
     if shutil.which("llm") or (Path(sys.executable).parent / "llm").exists():
@@ -134,13 +142,18 @@ def _detect_backend() -> str:
         "No LLM backend available. Install ONE of:\n"
         "  • Claude Code      (gives you `claude` CLI; uses your subscription)\n"
         "                     https://claude.com/code\n"
+        "  • OpenAI Codex CLI (uses your ChatGPT Plus / Pro subscription)\n"
+        "                     npm install -g @openai/codex     # then `codex login`\n"
+        "  • Google Gemini CLI (uses your Google AI Pro subscription, or free tier)\n"
+        "                     npm install -g @google/gemini-cli  # then `gemini auth`\n"
         "  • Ollama           (free, local, no internet)\n"
         "                     brew install ollama && ollama pull llama3.2\n"
         "                     ollama serve\n"
         "  • An API-key path  (any provider via the `llm` CLI — already in our deps)\n"
         "                     llm keys set claude     # or openai, gemini, etc.\n"
         "                     export LLM_MODEL=claude-sonnet-4-5\n"
-        "Then re-run.  You can also force one with BACKEND=claude_cli|ollama|llm."
+        "Then re-run.  You can also force one with "
+        "BACKEND=claude_cli|codex_cli|gemini_cli|ollama|llm."
     )
 
 
@@ -178,6 +191,10 @@ async def llm_call(system_prompt: str, user_message: str) -> str:
     m = _REQUEST_MODEL.get()
     if b == "claude_cli":
         return await _call_claude_cli(system_prompt, user_message)
+    if b == "codex_cli":
+        return await _call_codex_cli(system_prompt, user_message)
+    if b == "gemini_cli":
+        return await _call_gemini_cli(system_prompt, user_message)
     if b == "ollama":
         return await _call_ollama(system_prompt, user_message, model=m)
     if b == "llm":
@@ -189,8 +206,10 @@ def current_backend_info() -> dict[str, str | None]:
     """What backend / model would the next llm_call use, right now?"""
     b = _REQUEST_BACKEND.get() or get_backend()
     m = _REQUEST_MODEL.get()
-    if b == "claude_cli":
-        return {"backend": b, "model": None, "source": "request" if _REQUEST_BACKEND.get() else "auto"}
+    src = "request" if _REQUEST_BACKEND.get() else "auto"
+    # CLI backends auth via their own login flow — no per-call model arg.
+    if b in ("claude_cli", "codex_cli", "gemini_cli"):
+        return {"backend": b, "model": None, "source": src}
     if b == "ollama":
         return {
             "backend": b,
@@ -224,6 +243,86 @@ async def _call_claude_cli(system_prompt: str, user_message: str) -> str:
         raise RuntimeError(f"claude CLI timed out after {LLM_TIMEOUT_S}s")
     if proc.returncode != 0:
         raise RuntimeError(f"claude CLI failed: {stderr.decode(errors='replace')[:500]}")
+    return stdout.decode(errors="replace").strip()
+
+
+# --- codex_cli backend (OpenAI's `codex` CLI; ChatGPT subscription) --------
+
+def _combined_prompt(system_prompt: str, user_message: str) -> str:
+    """Codex and Gemini CLIs both take ONE prompt arg, not separate system /
+    user fields. Combine them with a clear delimiter."""
+    return f"{system_prompt}\n\n---\n\n{user_message}"
+
+
+async def _call_codex_cli(system_prompt: str, user_message: str) -> str:
+    if not shutil.which("codex"):
+        raise RuntimeError(
+            "`codex` CLI not on PATH. Install with one of:\n"
+            "  npm install -g @openai/codex\n"
+            "  brew install codex            # if available in your tap\n"
+            "Then run `codex login` to authenticate against your ChatGPT "
+            "Plus / Pro / Team subscription. Verify with `codex --version`.\n"
+            "If your codex version uses a different non-interactive command, "
+            "override via CODEX_CMD env var (e.g. CODEX_CMD='codex exec')."
+        )
+    # Default non-interactive form is `codex exec <prompt>`. Override the
+    # whole command via CODEX_CMD if the syntax differs in your installed
+    # version.
+    cmd_str = os.environ.get("CODEX_CMD", "codex exec")
+    cmd = cmd_str.split()
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, _combined_prompt(system_prompt, user_message),
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=LLM_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        proc.kill()
+        raise RuntimeError(f"`codex` CLI timed out after {LLM_TIMEOUT_S}s")
+    if proc.returncode != 0:
+        msg = stderr.decode(errors="replace")[:500]
+        hint = ""
+        if "login" in msg.lower() or "auth" in msg.lower():
+            hint = "\nHint: run `codex login` to authenticate first."
+        elif "unknown command" in msg.lower() or "no such" in msg.lower():
+            hint = (f"\nHint: your `codex` version may not support `{cmd_str}`. "
+                    f"Try setting CODEX_CMD to whatever your version uses for "
+                    f"non-interactive one-shot prompts.")
+        raise RuntimeError(f"`codex` CLI failed: {msg}{hint}")
+    return stdout.decode(errors="replace").strip()
+
+
+# --- gemini_cli backend (Google's `gemini` CLI; Google AI Pro / free tier) -
+
+async def _call_gemini_cli(system_prompt: str, user_message: str) -> str:
+    if not shutil.which("gemini"):
+        raise RuntimeError(
+            "`gemini` CLI not on PATH. Install with:\n"
+            "  npm install -g @google/gemini-cli\n"
+            "Then run `gemini auth` (or set GEMINI_API_KEY) to authenticate.\n"
+            "Verify with `gemini --version`.\n"
+            "If your gemini version uses a different non-interactive flag, "
+            "override via GEMINI_CMD env var (e.g. GEMINI_CMD='gemini -p')."
+        )
+    # Default non-interactive form is `gemini -p <prompt>`. Override the
+    # whole command via GEMINI_CMD if needed.
+    cmd_str = os.environ.get("GEMINI_CMD", "gemini -p")
+    cmd = cmd_str.split()
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, _combined_prompt(system_prompt, user_message),
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=LLM_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        proc.kill()
+        raise RuntimeError(f"`gemini` CLI timed out after {LLM_TIMEOUT_S}s")
+    if proc.returncode != 0:
+        msg = stderr.decode(errors="replace")[:500]
+        hint = ""
+        if "api_key" in msg.lower() or "auth" in msg.lower():
+            hint = "\nHint: run `gemini auth` or set GEMINI_API_KEY first."
+        raise RuntimeError(f"`gemini` CLI failed: {msg}{hint}")
     return stdout.decode(errors="replace").strip()
 
 

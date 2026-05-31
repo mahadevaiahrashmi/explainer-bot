@@ -204,7 +204,9 @@ class TestBackend:
         assert r.status_code == 200
         j = r.json()
         assert "backend" in j
-        assert j["valid_backends"] == ["claude_cli", "ollama", "llm"]
+        assert j["valid_backends"] == [
+            "claude_cli", "codex_cli", "gemini_cli", "ollama", "llm",
+        ]
 
 
 class TestScript:

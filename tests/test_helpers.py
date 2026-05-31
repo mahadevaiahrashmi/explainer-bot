@@ -15,9 +15,11 @@ from pipeline import (
     MIN_SLIDE_SECONDS,
     SPEAKING_WPM,
     Segment,
+    VALID_BACKENDS,
     _coerce_aesthetic,
     _coerce_critique,
     _coerce_segments,
+    _combined_prompt,
     _estimate_duration,
     _extract_json,
     _extract_json_obj,
@@ -26,6 +28,7 @@ from pipeline import (
     _render_script_text,
     _strip_fences,
     find_audio_for_slide,
+    set_request_overrides,
 )
 
 
@@ -351,3 +354,35 @@ class TestRenderScriptText:
         # Timestamps cumulate.
         assert "0:00 → 0:10" in out
         assert "0:10 → 0:30" in out
+
+
+# ─── Backend dispatch ─────────────────────────────────────────────────────────
+
+class TestBackends:
+    def test_five_backends_registered(self):
+        assert set(VALID_BACKENDS) == {
+            "claude_cli", "codex_cli", "gemini_cli", "ollama", "llm",
+        }
+
+    def test_unknown_backend_raises(self):
+        with pytest.raises(RuntimeError, match="Unknown backend"):
+            set_request_overrides(backend="pirate")
+
+    def test_each_valid_backend_accepted(self):
+        # set_request_overrides should NOT raise for any backend in the list.
+        for b in VALID_BACKENDS:
+            set_request_overrides(backend=b)   # also clears model
+        set_request_overrides(backend=None)    # reset
+
+
+# ─── _combined_prompt (used by codex_cli + gemini_cli) ────────────────────────
+
+class TestCombinedPrompt:
+    def test_includes_both_parts(self):
+        out = _combined_prompt("system part", "user part")
+        assert "system part" in out
+        assert "user part" in out
+
+    def test_has_separator(self):
+        out = _combined_prompt("a", "b")
+        assert "\n\n---\n\n" in out

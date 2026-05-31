@@ -54,7 +54,10 @@ Verify the chosen backend is wired up:
 ## Backend configuration
 
 `BACKEND=` (env var) picks which one to use. Unset = auto-detect, preferring
-`claude_cli` → `ollama` → `llm` in that order.
+`claude_cli` → `codex_cli` → `gemini_cli` → `ollama` → `llm` in that order.
+Subscription CLIs first (free, no per-call cost if you already pay for
+Claude / ChatGPT / Google AI), then local Ollama (free but needs the
+daemon running), then the paid-API catch-all via `llm`.
 
 ### Backend 1 — `claude_cli` (Claude Code subscription, no API key)
 
@@ -65,7 +68,46 @@ binary and uses your subscription. Verify with `claude --version`.
 export BACKEND=claude_cli   # optional; auto-detected anyway
 ```
 
-### Backend 2 — `ollama` (free, local, no internet)
+### Backend 2 — `codex_cli` (OpenAI ChatGPT Plus / Pro subscription)
+
+Uses [OpenAI's `codex` CLI](https://github.com/openai/codex) — same
+authentication as your ChatGPT subscription, no separate API key.
+
+```bash
+npm install -g @openai/codex      # or: brew install codex (if available)
+codex login                       # browser flow against your ChatGPT account
+codex --version                   # sanity check
+
+export BACKEND=codex_cli          # optional; auto-detected if `codex` is on PATH
+# If your codex version uses a different non-interactive form, override:
+# export CODEX_CMD="codex exec"   # the default — change only if your CLI differs
+```
+
+Costs nothing extra beyond your existing ChatGPT subscription. Quality
+matches whatever model your `codex` CLI is configured to use (GPT-4.1,
+GPT-5, o-series, etc.).
+
+### Backend 3 — `gemini_cli` (Google AI Pro / free tier)
+
+Uses [Google's `gemini` CLI](https://github.com/google-gemini/gemini-cli) —
+authenticate against your Google account or set `GEMINI_API_KEY`. Google
+AI's free tier is generous (millions of tokens / day for personal use).
+
+```bash
+npm install -g @google/gemini-cli
+gemini auth                       # browser flow against your Google account
+                                  # OR: export GEMINI_API_KEY=...
+gemini --version
+
+export BACKEND=gemini_cli         # optional; auto-detected if `gemini` is on PATH
+# Override the non-interactive form if your version uses a different flag:
+# export GEMINI_CMD="gemini -p"   # the default
+```
+
+Costs nothing on the free tier for casual use. Paid Google AI Pro
+removes rate limits and unlocks larger context windows.
+
+### Backend 4 — `ollama` (free, local, no internet)
 
 ```bash
 brew install ollama
@@ -122,7 +164,7 @@ brew services stop ollama       # stop the daemon
 brew services start ollama      # start it again (or after reboot, it's already on)
 ```
 
-### Backend 3 — `llm` (cloud API key — Anthropic / OpenAI / Gemini / …)
+### Backend 5 — `llm` (cloud API key — Anthropic / OpenAI / Gemini / …)
 
 The `llm` CLI is already in our dependencies. Pick a provider and set its
 key:
@@ -517,6 +559,10 @@ Where those calls hit, and what they cost, depends on the backend:
 
 - **`claude_cli`** — counts against your Claude Code subscription
   allowance, no extra billing.
+- **`codex_cli`** — counts against your ChatGPT Plus / Pro / Team
+  subscription, no extra billing.
+- **`gemini_cli`** — counts against your Google AI Pro subscription,
+  or the generous Google AI free tier if you're not on Pro.
 - **`ollama`** — runs locally, no charge, no internet.
 - **`llm`** — billed by the upstream provider (Anthropic / OpenAI /
   Gemini / …) at their token pricing. ~$0.02–$0.05 per video on

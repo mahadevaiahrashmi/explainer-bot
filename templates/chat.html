@@ -166,8 +166,10 @@
     <select id="picker-backend">
       <option value="">(server default)</option>
       <option value="claude_cli">claude_cli — Claude Code subscription</option>
+      <option value="codex_cli">codex_cli — OpenAI ChatGPT subscription (codex CLI)</option>
+      <option value="gemini_cli">gemini_cli — Google AI Pro subscription (gemini CLI)</option>
       <option value="ollama">ollama — local, free</option>
-      <option value="llm">llm — cloud key (Anthropic / OpenAI / Gemini / …)</option>
+      <option value="llm">llm — cloud key (any provider via the `llm` CLI)</option>
     </select>
     <label for="picker-model">Model:</label>
     <input id="picker-model" type="text" placeholder="e.g. claude-sonnet-4-5, llama3.2, gpt-4.1" />
