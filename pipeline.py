@@ -1128,6 +1128,16 @@ _AUDIO_EXTS = (".wav", ".mp3", ".m4a", ".aac", ".aiff", ".aif", ".flac", ".ogg",
 SAY_VOICE = "Samantha"
 SAY_RATE_WPM = 175
 
+# TTS engines for auto_narrate. Pick with TTS_ENGINE env var.
+#   say     — macOS built-in. Free, no setup. Default. Robotic but reliable.
+#   piper   — open-source neural TTS (Hugging Face piper-tts). Much higher
+#             quality than `say` but needs a Python install + a voice file
+#             download. Free and fully offline once set up. ✨ recommended.
+#   espeak  — eSpeak-NG fallback. Truly free, available on every OS, very
+#             robotic. Useful when piper isn't an option (e.g. Linux without
+#             Python) and macOS `say` isn't available either.
+VALID_TTS_ENGINES = ("say", "piper", "espeak")
+
 
 def find_audio_for_slide(audio_dir: Path, index: int) -> Path | None:
     """Look for slide_{index:02d}.{ext} in `audio_dir`."""
@@ -1138,14 +1148,120 @@ def find_audio_for_slide(audio_dir: Path, index: int) -> Path | None:
     return None
 
 
+def _resolve_tts_engine() -> str:
+    """Pick the TTS engine. Honour TTS_ENGINE env var, else default to `say`
+    (because `say` is always present on macOS and needs no setup)."""
+    chosen = (os.environ.get("TTS_ENGINE") or "").lower().strip()
+    if chosen and chosen not in VALID_TTS_ENGINES:
+        raise RuntimeError(
+            f"Unknown TTS_ENGINE={chosen!r}. Pick one of {', '.join(VALID_TTS_ENGINES)}."
+        )
+    return chosen or "say"
+
+
+def _synthesize_say(text: str, out_path: Path) -> None:
+    """macOS built-in `say` → AIFF."""
+    subprocess.run(
+        ["say", "-v", SAY_VOICE, "-r", str(SAY_RATE_WPM),
+         "-o", str(out_path), text],
+        check=True,
+    )
+
+
+def _piper_voice_path() -> Path:
+    """Locate a Piper voice file (.onnx). Order:
+        1. PIPER_VOICE env var if set
+        2. first .onnx found in ~/piper-voices/ (alphabetical)
+    """
+    env = os.environ.get("PIPER_VOICE")
+    if env:
+        p = Path(env).expanduser()
+        if not p.is_file():
+            raise RuntimeError(f"PIPER_VOICE={env!r} does not exist.")
+        return p
+    voices_dir = Path.home() / "piper-voices"
+    if voices_dir.is_dir():
+        for v in sorted(voices_dir.glob("*.onnx")):
+            return v
+    raise RuntimeError(
+        "No Piper voice found. Either:\n"
+        "  • set PIPER_VOICE=/abs/path/to/voice.onnx, or\n"
+        "  • drop one .onnx (+ matching .onnx.json) into ~/piper-voices/.\n"
+        "Voices: https://huggingface.co/rhasspy/piper-voices/tree/main\n"
+        "Recommended starter: en_US-lessac-medium (about 30 MB)."
+    )
+
+
+def _synthesize_piper(text: str, out_path: Path) -> None:
+    """Open-source Piper neural TTS → WAV."""
+    if not shutil.which("piper"):
+        raise RuntimeError(
+            "`piper` CLI not on PATH. Install with one of:\n"
+            "  pipx install piper-tts\n"
+            "  uv tool install piper-tts\n"
+            "  pip install piper-tts        (in your venv)\n"
+            "Then run a voice through it to confirm: "
+            "`echo hello | piper -m ~/piper-voices/en_US-lessac-medium.onnx -f /tmp/x.wav`"
+        )
+    voice = _piper_voice_path()
+    out_path = out_path.with_suffix(".wav")  # Piper writes WAV
+    proc = subprocess.run(
+        ["piper", "-m", str(voice), "-f", str(out_path)],
+        input=text, text=True, check=True,
+        capture_output=True,
+    )
+
+
+def _synthesize_espeak(text: str, out_path: Path) -> None:
+    """Lightweight eSpeak-NG fallback → WAV. Very robotic but works
+    on every platform with no setup beyond `brew install espeak-ng`."""
+    bin_name = "espeak-ng" if shutil.which("espeak-ng") else "espeak"
+    if not shutil.which(bin_name):
+        raise RuntimeError(
+            "Neither `espeak-ng` nor `espeak` is on PATH. "
+            "Install with `brew install espeak-ng` (macOS) or "
+            "`apt-get install espeak-ng` (Linux)."
+        )
+    out_path = out_path.with_suffix(".wav")
+    subprocess.run(
+        [bin_name, "-w", str(out_path), text],
+        check=True,
+    )
+
+
+def _synthesize(text: str, out_path_hint: Path) -> Path:
+    """Dispatch to the configured TTS engine. Returns the actually-written
+    path (the extension may differ from `out_path_hint` based on engine)."""
+    engine = _resolve_tts_engine()
+    if engine == "say":
+        out = out_path_hint.with_suffix(".aiff")
+        _synthesize_say(text, out)
+        return out
+    if engine == "piper":
+        out = out_path_hint.with_suffix(".wav")
+        _synthesize_piper(text, out)
+        return out
+    if engine == "espeak":
+        out = out_path_hint.with_suffix(".wav")
+        _synthesize_espeak(text, out)
+        return out
+    raise RuntimeError(f"unreachable: engine {engine!r}")
+
+
 def auto_narrate(
     job_id: str,
     overwrite: bool = False,
     progress_cb=None,
 ) -> list[Path]:
-    """Generate audio for the job with macOS ``say``.
+    """Generate audio for the job with the configured TTS engine.
 
-    Writes one ``slide_NN.aiff`` per segment into ``jobs/<id>/audio/``.
+    Engine is picked by ``TTS_ENGINE`` env var: ``say`` (default macOS),
+    ``piper`` (open-source neural TTS, much better quality), or
+    ``espeak`` (lightweight cross-platform fallback). See module-level
+    ``VALID_TTS_ENGINES``.
+
+    Writes one ``slide_NN.<ext>`` per segment into ``jobs/<id>/audio/``.
+    Extension depends on engine: .aiff for say, .wav for piper / espeak.
 
     By default we skip any slide that already has user-provided audio, so
     a user can hand-record a few slides and let the bot fill the rest.
@@ -1159,6 +1275,10 @@ def auto_narrate(
     audio_dir = job_dir / "audio"
     audio_dir.mkdir(exist_ok=True)
 
+    engine = _resolve_tts_engine()
+    if progress_cb:
+        progress_cb(f"TTS engine: {engine}")
+
     written: list[Path] = []
     for i, seg in enumerate(segments):
         existing = find_audio_for_slide(audio_dir, i)
@@ -1168,12 +1288,8 @@ def auto_narrate(
             continue
         if existing is not None and overwrite:
             existing.unlink()
-        out = audio_dir / f"slide_{i:02d}.aiff"
-        subprocess.run(
-            ["say", "-v", SAY_VOICE, "-r", str(SAY_RATE_WPM),
-             "-o", str(out), seg.narration],
-            check=True,
-        )
+        # Pass a stem hint; _synthesize picks the extension per engine.
+        out = _synthesize(seg.narration, audio_dir / f"slide_{i:02d}")
         written.append(out)
         if progress_cb:
             progress_cb(f"slide {i + 1}: synthesised {out.name}")

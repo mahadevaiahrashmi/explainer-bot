@@ -25,6 +25,7 @@ The bot turns a few rough points into a narrated explainer video.
 - [Re-recording a single slide](#re-recording-a-single-slide)
 - [Smoke test](#smoke-test)
 - [Troubleshooting](#troubleshooting)
+- [Text-to-speech engines (`TTS_ENGINE`)](#text-to-speech-engines-tts_engine)
 - [Cost / quota](#cost--quota)
 
 ---
@@ -410,6 +411,98 @@ instead.
   `slide_NN` (zero-padded). The audio dir is shown in both UIs.
 - **Final video plays but slides are too long / short** — that's just
   the audio length. Re-record that slide more tightly and re-finalize.
+
+## Text-to-speech engines (`TTS_ENGINE`)
+
+When you use **auto-narrate** (the "Auto-narrate missing slides" button,
+or `cli.py --auto-narrate`), the bot picks a TTS engine via the
+`TTS_ENGINE` env var. Three options:
+
+| `TTS_ENGINE=` | Voice quality       | Setup                   | License            |
+| ------------- | ------------------- | ----------------------- | ------------------ |
+| `say` (default) | Decent (macOS built-in) | None — already there  | Proprietary, free  |
+| **`piper`**   | **Very good** — neural | pipx install + 1 file | **Open source** ✨ |
+| `espeak`      | Robotic but clear   | `brew install espeak-ng` | Open source       |
+
+### Piper (open-source, recommended)
+
+[Piper](https://github.com/rhasspy/piper) is a small, fast, open-source
+neural TTS that runs on CPU and produces **dramatically better** audio
+than macOS `say` for explainer videos. Setup is a one-time install plus
+a voice download.
+
+**1. Install Piper:**
+
+```bash
+# pipx is the cleanest (isolated, on PATH globally)
+brew install pipx 2>/dev/null     # if you don't already have it
+pipx install piper-tts
+
+# Alternatives if you prefer:
+# uv tool install piper-tts
+# .venv/bin/pip install piper-tts   # inside this project's venv
+```
+
+**2. Download a voice** (one .onnx file + its .onnx.json):
+
+```bash
+mkdir -p ~/piper-voices
+cd ~/piper-voices
+curl -L -O https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx
+curl -L -O https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json
+```
+
+The "lessac medium" voice is ~30 MB and a good American English starter.
+Browse <https://huggingface.co/rhasspy/piper-voices> for dozens of others
+(other languages, male / female, smaller "low" or larger "high" sizes).
+
+**3. Verify:**
+
+```bash
+echo "Hello from Piper." | piper -m ~/piper-voices/en_US-lessac-medium.onnx -f /tmp/test.wav
+open /tmp/test.wav
+```
+
+**4. Use it for auto-narration:**
+
+```bash
+export TTS_ENGINE=piper
+# Optional — if unset, the bot uses the first .onnx in ~/piper-voices/
+export PIPER_VOICE=~/piper-voices/en_US-lessac-medium.onnx
+
+# Now any auto-narrate flow uses Piper.
+echo "your rough points ." | \
+  BACKEND=ollama TTS_ENGINE=piper .venv/bin/python cli.py --auto-narrate
+```
+
+The pipeline writes `slide_NN.wav` (instead of `.aiff` with `say`); the
+finalize step accepts either, so nothing else changes.
+
+### eSpeak-NG (fallback)
+
+If you're not on macOS and don't want to install Piper, eSpeak-NG is
+the lightest possible option:
+
+```bash
+brew install espeak-ng    # macOS
+# apt-get install espeak-ng    (Linux)
+
+export TTS_ENGINE=espeak
+```
+
+The voice is markedly robotic — useful as a sanity-check fallback, not
+for a polished video.
+
+### Switching engines
+
+Set the env var when starting the server (or use the CLI):
+
+```bash
+TTS_ENGINE=piper .venv/bin/uvicorn app:app --port 8000
+```
+
+The web UI's "Auto-narrate" buttons inherit whatever engine the server
+was started with. To change engines later, restart the server.
 
 ## Cost / quota
 
