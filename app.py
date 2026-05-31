@@ -386,6 +386,8 @@ async def delete_audio(job_id: str, index: int) -> dict[str, Any]:
     if job_id not in JOBS:
         raise HTTPException(404, "unknown job")
     audio_dir = JOBS_DIR / job_id / "audio"
+    if not audio_dir.is_dir():
+        raise HTTPException(404, "no audio for that slide")
     p = find_audio_for_slide(audio_dir, index)
     if p is None:
         raise HTTPException(404, "no audio for that slide")

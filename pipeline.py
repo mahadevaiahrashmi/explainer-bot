@@ -641,10 +641,106 @@ async def _design_slide(topic: str, aesthetic: Aesthetic, segment: Segment) -> s
     return _strip_fences(html)
 
 
-async def _screenshot_slide(html: str, out_png: Path, browser) -> None:
+# Minimum margin from the 1920×1080 frame edges (matches LAYOUT RULES L2
+# in SLIDE_DESIGNER_PROMPT). An element closer than this counts as a
+# "too close to edge" violation.
+EDGE_MARGIN_PX = 80
+# Ignore overlaps where the intersecting elements have a parent / child
+# relationship (an SVG inside its container, a span inside a heading)
+# or where both are decorative / structural (html, body, div with no text).
+_OVERLAP_IGNORE_TAGS = {"html", "body"}
+
+
+async def _detect_overlaps(page) -> list[str]:
+    """Run in-browser geometry checks on the just-laid-out slide.
+
+    Returns a list of human-readable problem strings. Empty list means
+    the layout passed all checks (no pair overlaps, all elements at
+    least EDGE_MARGIN_PX from each frame edge).
+
+    These problems are reported via the progress callback but do NOT
+    fail the screenshot. The user can review and use the in-app
+    "ask bot to fix this slide" flow to address them.
+    """
+    js = """
+    ([W, H, EDGE, IGNORE]) => {
+        const out = [];
+        // Only consider elements that have text content OR are an svg/img
+        // (i.e. things the user actually sees and cares about overlap of).
+        const all = Array.from(document.body.querySelectorAll('*'))
+            .filter(el => !IGNORE.includes(el.tagName.toLowerCase()))
+            .filter(el => {
+                const r = el.getBoundingClientRect();
+                if (r.width === 0 || r.height === 0) return false;
+                const hasText = (el.textContent || '').trim().length > 0;
+                const tag = el.tagName.toLowerCase();
+                return hasText || tag === 'svg' || tag === 'img';
+            });
+
+        // Edge-margin check: anything within EDGE of the frame edge.
+        for (const el of all) {
+            const r = el.getBoundingClientRect();
+            const tag = el.tagName.toLowerCase();
+            const tag_summary = tag + (el.id ? '#' + el.id : '')
+                + (el.className && typeof el.className === 'string'
+                    ? '.' + el.className.split(/\\s+/).filter(Boolean).slice(0,2).join('.')
+                    : '');
+            const t = (el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 30);
+            const label = t ? `${tag_summary} "${t}"` : tag_summary;
+            if (r.top    < EDGE)            out.push(`too close to TOP edge (y=${Math.round(r.top)}): ${label}`);
+            if (r.left   < EDGE)            out.push(`too close to LEFT edge (x=${Math.round(r.left)}): ${label}`);
+            if (r.right  > W - EDGE)        out.push(`too close to RIGHT edge (x=${Math.round(r.right)}): ${label}`);
+            if (r.bottom > H - EDGE)        out.push(`too close to BOTTOM edge (y=${Math.round(r.bottom)}): ${label}`);
+        }
+
+        // Pairwise overlap check. Skip pairs where one element contains
+        // the other (e.g. a span inside its parent heading).
+        function intersects(a, b) {
+            return !(a.right  <= b.left ||
+                     a.bottom <= b.top  ||
+                     a.left   >= b.right ||
+                     a.top    >= b.bottom);
+        }
+        for (let i = 0; i < all.length; i++) {
+            for (let j = i + 1; j < all.length; j++) {
+                const A = all[i], B = all[j];
+                if (A.contains(B) || B.contains(A)) continue;
+                const ra = A.getBoundingClientRect();
+                const rb = B.getBoundingClientRect();
+                if (intersects(ra, rb)) {
+                    const ta = (A.textContent || '').replace(/\\s+/g,' ').trim().slice(0, 30);
+                    const tb = (B.textContent || '').replace(/\\s+/g,' ').trim().slice(0, 30);
+                    out.push(`OVERLAP: <${A.tagName.toLowerCase()}> "${ta}" ⨯ <${B.tagName.toLowerCase()}> "${tb}"`);
+                }
+            }
+        }
+        return out;
+    }
+    """
+    try:
+        return await page.evaluate(js, [VIDEO_W, VIDEO_H, EDGE_MARGIN_PX,
+                                        sorted(_OVERLAP_IGNORE_TAGS)])
+    except Exception:  # JS error etc. — don't break the pipeline.
+        return []
+
+
+async def _screenshot_slide(html: str, out_png: Path, browser,
+                            progress_cb=None, slide_label: str = "") -> None:
     page = await browser.new_page(viewport={"width": VIDEO_W, "height": VIDEO_H})
     try:
         await page.set_content(html, wait_until="networkidle")
+        # Run overlap / edge-margin checks BEFORE the screenshot so the
+        # user gets a heads-up if the slide-designer prompt didn't respect
+        # the no-overlap rules (which it should, but smaller models drift).
+        if progress_cb:
+            problems = await _detect_overlaps(page)
+            if problems:
+                progress_cb(f"  ⚠ {slide_label or out_png.stem}: "
+                            f"{len(problems)} layout issue(s) detected:")
+                for p in problems[:5]:    # cap the spam at 5 lines per slide
+                    progress_cb(f"      • {p}")
+                if len(problems) > 5:
+                    progress_cb(f"      … and {len(problems) - 5} more")
         await page.screenshot(path=str(out_png), full_page=False, omit_background=False)
     finally:
         await page.close()
@@ -931,7 +1027,11 @@ async def screenshot_slides(
                 if not html_path.exists():
                     raise FileNotFoundError(f"missing HTML for slide {i}: {html_path}")
                 png = _slide_png_path(job_dir, i)
-                await _screenshot_slide(html_path.read_text(), png, browser)
+                await _screenshot_slide(
+                    html_path.read_text(), png, browser,
+                    progress_cb=progress_cb,
+                    slide_label=f"slide {i + 1}/{len(segments)}",
+                )
                 pngs.append(png)
                 if progress_cb:
                     progress_cb(f"Captured slide {i + 1}/{len(segments)}")

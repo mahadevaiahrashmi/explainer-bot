@@ -479,7 +479,13 @@ $("#btn-design").addEventListener("click", async () => {
       index: s.index, title: s.title, html: s.html, savedHtml: s.html,
       dirty: false, pngStale: true,  // pngs don't exist until we re-render
     }));
-    CURRENT_SLIDE = 0;
+    // Sentinel: selectSlide()'s "save current textarea before switching"
+    // step must NOT run on first entry — the textarea still holds whatever
+    // was last shown (an old slide from the previous run, or empty), and
+    // saving it would clobber SLIDES[0].html. Setting CURRENT_SLIDE to a
+    // non-existent index makes the `if (SLIDES[CURRENT_SLIDE])` guard skip.
+    CURRENT_SLIDE = -1;
+    $("#slide-html").value = "";   // belt-and-suspenders: blank the editor
     renderSlideTabs();
     selectSlide(0);
     show("stage-slides");

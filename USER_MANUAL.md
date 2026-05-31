@@ -18,6 +18,7 @@ The bot turns a few rough points into a narrated explainer video.
 - [One-time setup](#one-time-setup)
 - [Backend configuration](#backend-configuration) — Claude Code / Ollama / cloud key
 - [Web UI](#web-ui)
+- [Starting and stopping the server](#starting-and-stopping-the-server)
 - [Terminal UI](#terminal-ui)
 - [One-shot end-to-end](#one-shot-end-to-end-no-clicks-no-recording)
 - [Files you get per job](#files-you-get-per-job)
@@ -189,6 +190,55 @@ A picker strip at the top of every page lets you change backend / model
 on a per-request basis. The badge shows the current server default; the
 picker overrides it. The picker rides along on `/script`, `/design`,
 and `/slide/{i}/fix`.
+
+### Starting and stopping the server
+
+**Web server only (auto-detect backend):**
+
+```bash
+cd content
+.venv/bin/uvicorn app:app --reload --port 8000
+```
+
+**Pin the backend at startup:**
+
+```bash
+# Subscription (Claude Code)
+BACKEND=claude_cli .venv/bin/uvicorn app:app --port 8000
+
+# Local (Ollama) — make sure Ollama is running first (see below)
+BACKEND=ollama OLLAMA_MODEL=llama3.2 \
+    .venv/bin/uvicorn app:app --port 8000
+
+# Cloud API key (any provider known to `llm`)
+BACKEND=llm LLM_MODEL=claude-sonnet-4-5 \
+    .venv/bin/uvicorn app:app --port 8000
+```
+
+**Stop the web server:**
+
+```bash
+lsof -ti :8000 | xargs kill         # graceful (SIGTERM)
+lsof -ti :8000 | xargs kill -9      # force (if it hangs)
+```
+
+**Ollama daemon — only needed if you use `BACKEND=ollama`:**
+
+```bash
+brew services start ollama       # one-time; auto-starts on login afterwards
+brew services restart ollama     # after upgrading Ollama
+brew services stop  ollama       # session-only stop
+brew services info  ollama       # current status
+
+ollama serve                     # alternative: run in foreground (don't combine with brew services)
+```
+
+**Full shutdown (web server + Ollama):**
+
+```bash
+lsof -ti :8000 | xargs kill 2>/dev/null
+brew services stop ollama
+```
 
 ---
 
