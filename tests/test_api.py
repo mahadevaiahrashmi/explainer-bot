@@ -207,6 +207,9 @@ class TestBackend:
         assert j["valid_backends"] == [
             "claude_cli", "codex_cli", "gemini_cli", "ollama", "llm",
         ]
+        # TTS fields now part of the contract too.
+        assert "tts_engine" in j and j["tts_engine"] in ("say", "piper", "espeak")
+        assert "tts_source" in j
 
 
 class TestScript:

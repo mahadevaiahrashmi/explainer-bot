@@ -105,19 +105,33 @@ _REQUEST_BACKEND: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 _REQUEST_MODEL: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "explainer_request_model", default=None,
 )
+_REQUEST_TTS_ENGINE: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "explainer_request_tts_engine", default=None,
+)
 
 
-def set_request_overrides(backend: str | None = None, model: str | None = None) -> None:
-    """Override the backend / model for the current async context only.
+def set_request_overrides(
+    backend: str | None = None,
+    model: str | None = None,
+    tts_engine: str | None = None,
+) -> None:
+    """Override the LLM backend / model / TTS engine for the current async
+    context only.
 
-    Pass empty / None to leave the default in effect. Call this at the start of
-    every request handler that wants to honour user-supplied picks.
+    Pass empty / None to leave the default in effect. Call this at the start
+    of every request handler that wants to honour user-supplied picks.
     """
     b = (backend or "").strip().lower() or None
     if b and b not in VALID_BACKENDS:
         raise RuntimeError(f"Unknown backend {b!r}; pick one of {', '.join(VALID_BACKENDS)}.")
+    t = (tts_engine or "").strip().lower() or None
+    if t and t not in VALID_TTS_ENGINES:
+        raise RuntimeError(
+            f"Unknown TTS engine {t!r}; pick one of {', '.join(VALID_TTS_ENGINES)}."
+        )
     _REQUEST_BACKEND.set(b)
     _REQUEST_MODEL.set((model or "").strip() or None)
+    _REQUEST_TTS_ENGINE.set(t)
 
 
 def _detect_backend() -> str:
@@ -203,26 +217,38 @@ async def llm_call(system_prompt: str, user_message: str) -> str:
 
 
 def current_backend_info() -> dict[str, str | None]:
-    """What backend / model would the next llm_call use, right now?"""
+    """What backend / model / TTS engine would the next llm_call (and
+    auto_narrate) use, right now?"""
     b = _REQUEST_BACKEND.get() or get_backend()
     m = _REQUEST_MODEL.get()
     src = "request" if _REQUEST_BACKEND.get() else "auto"
-    # CLI backends auth via their own login flow — no per-call model arg.
+    # Build the LLM-side info first.
     if b in ("claude_cli", "codex_cli", "gemini_cli"):
-        return {"backend": b, "model": None, "source": src}
-    if b == "ollama":
-        return {
+        info: dict[str, str | None] = {"backend": b, "model": None, "source": src}
+    elif b == "ollama":
+        info = {
             "backend": b,
             "model": m or os.environ.get("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL),
             "source": "request" if (m or _REQUEST_BACKEND.get()) else "env",
         }
-    if b == "llm":
-        return {
+    elif b == "llm":
+        info = {
             "backend": b,
             "model": m or os.environ.get("LLM_MODEL"),
             "source": "request" if (m or _REQUEST_BACKEND.get()) else "env",
         }
-    return {"backend": b, "model": None, "source": "unknown"}
+    else:
+        info = {"backend": b, "model": None, "source": "unknown"}
+    # TTS side — same source-tag convention.
+    tts_req = _REQUEST_TTS_ENGINE.get()
+    info["tts_engine"] = _resolve_tts_engine()
+    if tts_req:
+        info["tts_source"] = "request"
+    elif os.environ.get("TTS_ENGINE"):
+        info["tts_source"] = "env"
+    else:
+        info["tts_source"] = "default"
+    return info
 
 
 # Back-compat alias — old callers used pipeline.claude(...).
@@ -1248,8 +1274,14 @@ def find_audio_for_slide(audio_dir: Path, index: int) -> Path | None:
 
 
 def _resolve_tts_engine() -> str:
-    """Pick the TTS engine. Honour TTS_ENGINE env var, else default to `say`
-    (because `say` is always present on macOS and needs no setup)."""
+    """Pick the TTS engine. Order of precedence:
+        1. per-request override via `set_request_overrides(tts_engine=...)`
+        2. TTS_ENGINE env var
+        3. default `say` (macOS built-in, always present)
+    """
+    req = _REQUEST_TTS_ENGINE.get()
+    if req:
+        return req
     chosen = (os.environ.get("TTS_ENGINE") or "").lower().strip()
     if chosen and chosen not in VALID_TTS_ENGINES:
         raise RuntimeError(

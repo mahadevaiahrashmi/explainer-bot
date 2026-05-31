@@ -375,6 +375,25 @@ class TestBackends:
         set_request_overrides(backend=None)    # reset
 
 
+class TestTtsOverride:
+    def test_each_valid_engine_accepted(self):
+        for e in ("say", "piper", "espeak"):
+            set_request_overrides(tts_engine=e)
+        set_request_overrides(tts_engine=None)  # reset
+
+    def test_unknown_engine_raises(self):
+        with pytest.raises(RuntimeError, match="Unknown TTS engine"):
+            set_request_overrides(tts_engine="elvis")
+
+    def test_override_affects_resolver(self):
+        from pipeline import _resolve_tts_engine
+        set_request_overrides(tts_engine="piper")
+        assert _resolve_tts_engine() == "piper"
+        set_request_overrides(tts_engine=None)  # reset
+        # Now back to env default (say if no env var set).
+        assert _resolve_tts_engine() in ("say", "piper", "espeak")
+
+
 # ─── _combined_prompt (used by codex_cli + gemini_cli) ────────────────────────
 
 class TestCombinedPrompt:

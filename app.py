@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import shutil
 import traceback
 import uuid
@@ -397,14 +398,29 @@ async def delete_audio(job_id: str, index: int) -> dict[str, Any]:
 
 @app.post("/jobs/{job_id}/auto-narrate")
 async def post_auto_narrate(
-    job_id: str, overwrite: bool = False
+    job_id: str,
+    overwrite: bool = False,
+    tts_engine: str | None = None,
 ) -> dict[str, Any]:
-    """Fill in missing slide audio (or replace all if overwrite=true) with `say`."""
+    """Fill in missing slide audio (or replace all if overwrite=true) using the
+    configured TTS engine. `tts_engine` query param overrides the env-var
+    default; valid values: `say`, `piper`, `espeak`."""
     if job_id not in JOBS:
         raise HTTPException(404, "unknown job")
     try:
-        # Off-thread so we don't block the event loop while `say` runs.
-        written = await asyncio.to_thread(auto_narrate, job_id, overwrite)
+        set_request_overrides(tts_engine=tts_engine)
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+
+    # Capture the ContextVar snapshot so the override survives the thread hop.
+    ctx = contextvars.copy_context()
+
+    def _run_with_ctx():
+        return ctx.run(auto_narrate, job_id, overwrite)
+
+    try:
+        # Off-thread so we don't block the event loop while the TTS engine runs.
+        written = await asyncio.to_thread(_run_with_ctx)
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(500, f"auto-narrate failed: {e}")

@@ -173,6 +173,13 @@
     </select>
     <label for="picker-model">Model:</label>
     <input id="picker-model" type="text" placeholder="e.g. claude-sonnet-4-5, llama3.2, gpt-4.1" />
+    <label for="picker-tts" title="Used by auto-narrate; ignored if you record your own audio">TTS:</label>
+    <select id="picker-tts">
+      <option value="">(server default)</option>
+      <option value="say">say — macOS built-in (robotic)</option>
+      <option value="piper">piper — open-source neural (best quality, needs setup)</option>
+      <option value="espeak">espeak — eSpeak-NG (cross-platform fallback)</option>
+    </select>
     <span class="badge">Server default: <code id="picker-current">…</code></span>
   </div>
 
@@ -353,6 +360,7 @@ function pickerOverrides() {
   return {
     backend: $("#picker-backend").value || null,
     model: $("#picker-model").value.trim() || null,
+    tts_engine: $("#picker-tts").value || null,
   };
 }
 
@@ -379,7 +387,11 @@ async function refreshBackendBadge() {
     if (!r.ok) throw new Error(await r.text());
     const j = await r.json();
     const m = j.model ? `${j.backend}:${j.model}` : j.backend;
-    $("#picker-current").textContent = m + (j.source ? `  (${j.source})` : "");
+    const lhs = m + (j.source ? ` (${j.source})` : "");
+    const tts = j.tts_engine
+      ? `  •  tts=${j.tts_engine}${j.tts_source ? ` (${j.tts_source})` : ""}`
+      : "";
+    $("#picker-current").textContent = lhs + tts;
   } catch (e) {
     $("#picker-current").textContent = "unknown";
   }
@@ -774,7 +786,10 @@ async function autoNarrate(overwrite) {
   const target = overwrite ? btnAll : btnFill;
   target.textContent = "Synthesising...";
   try {
-    const r = await fetch(`/jobs/${JOB_ID}/auto-narrate?overwrite=${overwrite ? "true" : "false"}`,
+    const tts = $("#picker-tts").value;
+    const q = new URLSearchParams({ overwrite: overwrite ? "true" : "false" });
+    if (tts) q.set("tts_engine", tts);
+    const r = await fetch(`/jobs/${JOB_ID}/auto-narrate?${q.toString()}`,
                           { method: "POST" });
     if (!r.ok) throw new Error(await r.text());
     const data = await r.json();

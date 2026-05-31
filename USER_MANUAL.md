@@ -230,9 +230,17 @@ once.
 ### Switching models per request
 
 A picker strip at the top of every page lets you change backend / model
-on a per-request basis. The badge shows the current server default; the
-picker overrides it. The picker rides along on `/script`, `/design`,
-and `/slide/{i}/fix`.
+**and TTS engine** on a per-request basis. The badge shows the current
+server defaults; the picker overrides them.
+
+- **Backend** + **Model** ride along on `/script`, `/design`, and
+  `/slide/{i}/fix`.
+- **TTS** rides along on `/jobs/{id}/auto-narrate` only — it has no
+  effect when you record your own audio.
+
+So you can, for example, generate slides with Claude (the default LLM)
+and have them narrated by Piper without restarting the server: just
+pick `piper` from the TTS dropdown before clicking "Auto-narrate".
 
 ### Starting and stopping the server
 
