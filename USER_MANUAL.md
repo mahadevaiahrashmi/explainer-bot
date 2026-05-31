@@ -21,6 +21,7 @@ The bot turns a few rough points into a narrated explainer video.
 - [Starting and stopping the server](#starting-and-stopping-the-server)
 - [Terminal UI](#terminal-ui)
 - [One-shot end-to-end](#one-shot-end-to-end-no-clicks-no-recording)
+- [Writing rough points](#writing-rough-points) — directives + worked backprop example
 - [Files you get per job](#files-you-get-per-job)
 - [Re-recording a single slide](#re-recording-a-single-slide)
 - [Smoke test](#smoke-test)
@@ -395,6 +396,138 @@ generous free tier), or any model `.venv/bin/llm models` lists.
 5. assembles the final MP4
 
 No prompts, no clicks. The final video opens in QuickTime automatically.
+
+---
+
+## Writing rough points
+
+The "rough points" you paste are the *single* input the bot has — the
+writer, the aesthetic-picker, the slide-designer, and the critic all
+read the same text. So anything you put in there shapes the output.
+
+### Minimal shape
+
+A topic line, then 3–6 bullets:
+
+```
+What is recursion?
+- a function that calls itself
+- needs a base case
+- the matryoshka / Russian-doll analogy
+- factorial example
+.
+```
+
+That's it. The final `.` on its own line is only needed when piping
+via `cli.py --auto-narrate`; in the web UI you just click the button.
+
+### Optional directives (recommended for serious videos)
+
+You can put a labelled header *before* your rough points to control
+tone, audience, voice, aesthetic, etc. The bot honours these because
+the prompts pass the full text through. Use them sparingly — too many
+directives crowd out the actual content.
+
+| Directive          | What it influences                                                  | Example                                                  |
+| ------------------ | -------------------------------------------------------------------- | -------------------------------------------------------- |
+| `AUDIENCE`         | Reading level + assumed background (writer + critic)                | "a 2nd-year CS undergrad who knows Python but no calculus" |
+| `TONE`             | Playfulness vs gravitas (writer)                                    | "playful but rigorous"                                   |
+| `PERSONA`          | Who the narrator pretends to be (writer)                            | "a friendly grad-student TA who's slightly nerdy"        |
+| `HUMOUR`           | How and how much (writer)                                           | "occasional dry asides, never forced"                    |
+| `LANGUAGE`         | Output language + register                                          | "English; one or two physics analogies"                  |
+| `STYLE`            | Reference creator or genre (writer + designer)                      | "3Blue1Brown — restrained, animated when it matters"     |
+| `COLOR THEME`      | Slide palette (aesthetic-picker overrides default)                  | "dark navy #0e1a2b, soft white text, blue-teal accents"  |
+| `SIMPLICITY`       | Where to define jargon vs assume it (writer)                        | "undergrad-friendly; define each new term once"          |
+
+### Full worked example — backpropagation
+
+This input uses every directive above. It's deliberately verbose to
+*show* the format — most real videos won't need all 8 facets set.
+
+```
+TOPIC: How backpropagation actually trains a neural network
+
+AUDIENCE: a curious 2nd-year CS undergrad who knows Python and basic
+  calculus, but hasn't used the chain rule in 6 months
+TONE: playful but rigorous; the math is real, but we never hide
+  behind it
+PERSONA: a friendly grad-student TA who's slightly nerdy and gets
+  visibly excited when an idea lands
+HUMOUR: occasional dry asides ("Mathematicians named this thing in
+  the worst possible way"), never forced
+LANGUAGE: English; one mechanical-engineering analogy, one cooking
+  analogy if it fits
+STYLE: 3Blue1Brown — restrained, animated when it matters, never
+  busy. One focal idea per slide.
+COLOR THEME: dark navy background (#0e1a2b), soft white text,
+  blue-teal #4dd0e1 for the network diagram, soft yellow #ffd54f
+  to highlight the active edge during backprop
+SIMPLICITY: undergrad-friendly. Assume they can READ a derivative
+  but not DERIVE one quickly. Define jargon the first time it
+  appears. Avoid `nabla`, prefer the word "gradient".
+
+ROUGH POINTS:
+- the problem: a neural network has thousands to billions of "knobs"
+  (weights and biases); how do we tune them all?
+- naïve idea: try every knob in turn → impossible, even on a small
+  network
+- gradient descent: nudge each knob in the direction that reduces
+  error a tiny bit. But how do we know which direction "down" is?
+- we need the gradient — and the hard part is: how does THIS knob,
+  buried 50 layers deep, affect the FINAL loss?
+- the chain rule of calculus, applied like an assembly line in
+  reverse: compute the output forward, walk backwards layer by
+  layer, multiply local gradients along the way
+- analogy: the network is a Rube Goldberg machine; backprop is
+  asking each component "if I tweaked YOU, how much would the final
+  ball-drop position move?"
+- the punchline: ONE forward pass to compute the output, ONE
+  backward pass to compute every gradient simultaneously — both are
+  O(N), not O(N²)
+- this is why deep learning works at all — without backprop,
+  training even a tiny network would be impractical and the whole
+  field would still be in the 1980s
+.
+```
+
+### What actually happens to each directive
+
+The prompts pass your entire input through, so:
+
+- `AUDIENCE`, `TONE`, `PERSONA`, `HUMOUR`, `SIMPLICITY` → influence
+  the **writer** (`WRITER_PROMPT`) and the **critic**
+  (`CRITIC_PROMPT`) — they show up as the voice and pitch of the
+  narration.
+- `LANGUAGE` → shapes word choice and which analogies the writer
+  reaches for.
+- `STYLE` and `COLOR THEME` → influence the **aesthetic-picker**
+  (`AESTHETIC_PICKER_PROMPT`) and downstream the
+  **slide-designer** (`SLIDE_DESIGNER_PROMPT`).
+
+These are **strong suggestions, not hard guarantees** — the writer
+might soften a tone that conflicts with the topic, or the
+aesthetic-picker might tweak a colour for legibility at 1920×1080.
+Use the in-app **"Ask bot to fix this slide"** panel to push back if
+a specific slide drifts.
+
+### Tips for getting consistently good output
+
+1. **Start with the misconception or hook**, not the dictionary
+   definition. The reviewer scores "wonder" — surprise beats
+   completeness.
+2. **Include at least one analogy** in your bullets. If you give
+   the writer good ones, it uses yours; if you don't, it invents
+   them and they're hit-or-miss.
+3. **3–6 bullets is the sweet spot.** Fewer → bot has to invent
+   more. More → bot starts skipping or padding.
+4. **Skip jargon you'd have to define** — unless you set
+   `SIMPLICITY` to assume the audience knows it.
+5. **Bullets in the order you'd build understanding**, not the
+   order of a textbook chapter. The writer respects your sequence.
+6. **The directives are optional.** If you skip them all, the bot
+   defaults to: 3Blue1Brown style, 1st-year CS undergrad audience,
+   curious-and-restrained tone, dark navy aesthetic. That default
+   is fine for most explainer-bot uses.
 
 ---
 
