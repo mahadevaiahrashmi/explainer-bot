@@ -81,7 +81,7 @@ File an issue **only if** Layers A and B didn't help and you think the
 problem is a real bug in the bot (e.g. the bot's fix always fails the
 same way, or every slide overflows on a particular aspect ratio).
 
-See §5 below for what to include.
+See §6 below for what to include.
 
 ---
 
@@ -104,7 +104,7 @@ behaviour to assert against.
 | **Smoke test** (current)   | One end-to-end pipeline run with a fixed input. Uses `say` as stand-in for voice.       | `smoke_test.py`                   | ~3–5 min, ~3 Claude calls per run.     |
 | **Unit / pytest** (future) | Pure-function helpers (`_estimate_duration`, `_extract_json`, `find_audio_for_slide`). | `tests/test_helpers.py` *(TBD)*  | Fast, no Claude. Add when you change those helpers. |
 | **API contract tests** (future) | HTTP shape of every endpoint, with the pipeline mocked.                                 | `tests/test_api.py` *(TBD)*      | Fast. Use `pytest`+`httpx.AsyncClient` and monkeypatch `pipeline.*`. |
-| **UAT** *(see §4)*         | A human watches the final video and ticks a checklist.                                  | This document.                    | ~5 minutes per release.                |
+| **UAT** *(see §5)*         | A human watches the final video and ticks a checklist.                                  | This document.                    | ~5 minutes per release.                |
 
 The smoke test is the only one that exists today; the others are
 appropriate to add as the surface grows. There is intentionally no
@@ -165,7 +165,111 @@ pytest suite for this tool.
 
 ---
 
-## 4. User Acceptance Testing checklist
+## 4. End-to-end test run history
+
+Reproducible records of full-pipeline runs we've done on this machine,
+in reverse chronological order. Each record is a falsifiable snapshot
+(input, configuration, what came out, when, anything weird).
+
+### Coverage matrix (latest verified configurations)
+
+| LLM \ TTS                       | `say` | `piper` | **`supertonic`** | `espeak` |
+| ------------------------------- | ----- | ------- | ---------------- | -------- |
+| `claude_cli`                    | ✅ #1  | —       | **✅ #3**         | —        |
+| `ollama` (llama3.2)             | ✅ #2  | —       | **✅ #4**         | —        |
+| `codex_cli` / `gemini_cli` / `llm` | —     | —       | —                | —        |
+
+✅ = full pipeline run, MP4 produced, played correctly.
+— = code path is implemented but not E2E-verified on this machine.
+
+### Run #4 — Ollama (llama3.2) + Supertonic + auto-narrate from 4 words
+
+| Field | Value |
+| --- | --- |
+| Job id | `6869f71aba` |
+| Commit | [d284d13](https://github.com/mahadevaiahrashmi/explainer-bot/commit/d284d13) |
+| Rough points (verbatim) | `vedic maths for square root` (4 words) |
+| `BACKEND` | `ollama` |
+| `OLLAMA_MODEL` | `llama3.2` |
+| `TTS_ENGINE` | `supertonic` |
+| `--auto-narrate` | yes |
+| Wall-clock | not measured precisely (~10–15 min, CPU-only Ollama) |
+| Network calls during run | **zero** (Ollama + Supertonic both local; Supertonic model already cached from run #3) |
+| Output file | `jobs/6869f71aba/video.mp4` |
+| Output size | **1.2 MB** |
+| Output duration | **49.8 s** (6 slides averaging ~8 s each) |
+| Video codec | H.264, 1920×1080 |
+| Audio codec | AAC, 44.1 kHz |
+| Slides drafted | 6 |
+| Anomalies | none — pipeline ran clean from start to finish |
+| Content quality | ⚠️ Weak (expected for 4-word input on a 3B model). Narration field on most slides was the visual description repeated verbatim instead of separate spoken prose. Validates the pipeline; does not validate the "useful video from 4 words on llama3.2" claim. With 3–5 bullets in the rough points, llama3.2 produces sensible narration; sparse-input quality is a model limit, not a bug. |
+| What this proves | Fully free, fully offline path works end-to-end on this machine. No API key, no internet, no per-call cost. |
+
+### Run #3 — Claude Code subscription + Supertonic + auto-narrate
+
+| Field | Value |
+| --- | --- |
+| Job id | `36dd568190` |
+| Commit | [f643a1b](https://github.com/mahadevaiahrashmi/explainer-bot/commit/f643a1b) (post-Supertonic land) |
+| Rough points (verbatim) | "What is recursion?\n- a function that calls itself\n- needs a base case\n- matryoshka doll analogy\n." |
+| `BACKEND` | `claude_cli` |
+| `TTS_ENGINE` | `supertonic` |
+| `--auto-narrate` | yes |
+| Wall-clock | ≈ 5–6 min (most of it Supertonic model auto-download on first call: 51 s for 26 ONNX files, ~260 MB total) |
+| Output file | `jobs/36dd568190/video.mp4` |
+| Output size | **3.2 MB** |
+| Output duration | **103.3 s** (5 slides averaging ~21 s each) |
+| Video codec | H.264, 1920×1080 |
+| Audio codec | AAC, 44.1 kHz (re-encoded from Supertonic's 16-bit PCM 44.1 kHz WAV output) |
+| Slides drafted | 5 |
+| Anomalies | One partial-build failure during initial run: `final_clip_04.mp4` was written to disk but truncated (no `moov` atom) when the Bash-tool background process was reaped before the final ffmpeg concat completed. **Recovery:** `python -c "import asyncio, pipeline; asyncio.run(pipeline.build_final('36dd568190'))"` reused the per-slide audio + slide PNGs from disk and finished in ~30 s with no Claude re-call needed. **Lesson:** the on-disk handoff between stages (PRD FR-15, SYSTEM_DESIGN §10.2) is genuinely resumable; the documented escape hatch works. |
+| Overlap detector findings | 47 layout warnings logged across the 5 slides (mostly "too close to TOP edge" + a handful of element-pair overlaps). None blocked the build. Confirms SLIDE_DESIGNER_PROMPT's L1–L8 layout rules + the SELF-CHECK block are guidelines the model partially honours, not hard guarantees. |
+| Content quality | Good — Claude's narration was distinct from the visual brief and pedagogically sound; the matryoshka analogy landed; verdict was `approve` with all three critic scores ≥ 4. |
+| What this proves | `claude_cli` + `supertonic` is the "free if you have Claude Code, no microphone needed" sweet spot. |
+
+### Run #2 — Ollama (llama3.2) + `say` + auto-narrate
+
+| Field | Value |
+| --- | --- |
+| Commit | [d23587a](https://github.com/mahadevaiahrashmi/explainer-bot/commit/d23587a) (defensive JSON parsing fix landed) |
+| Rough points | recursion (5 bullets, same as run #3 modulo whitespace) |
+| `BACKEND` | `ollama` |
+| `OLLAMA_MODEL` | `llama3.2` |
+| `TTS_ENGINE` | `say` (default) |
+| `--auto-narrate` | yes |
+| Wall-clock | ≈ 10 min |
+| Output | 4-slide MP4 played correctly; macOS `say` voice |
+| Anomalies | First attempt crashed at the script-approval prompt because `--auto-narrate` didn't auto-approve the script (CLI bug). Fixed in commit [cb4c3ce](https://github.com/mahadevaiahrashmi/explainer-bot/commit/cb4c3ce); rerun succeeded. Second attempt crashed in `_coerce_segments` because llama3.2's writer omitted the `narration` field on one segment. Fixed in commit [596479f](https://github.com/mahadevaiahrashmi/explainer-bot/commit/596479f); rerun succeeded with a clean output. |
+| What this proves | The defensive parsing layer is necessary, not paranoid. Small models drop required JSON keys often enough that the production code path has to recover; this UAT pass surfaced 4 distinct robustness fixes before reaching a clean run. |
+
+### Run #1 — Claude Code subscription + `say` (the "baseline" smoke test)
+
+| Field | Value |
+| --- | --- |
+| Job id | `42a4118925` |
+| Commit | [d23587a](https://github.com/mahadevaiahrashmi/explainer-bot/commit/d23587a) |
+| Source | `smoke_test.py` |
+| Slides | 2 (truncated by smoke_test for speed) |
+| Output size | **1.9 MB** |
+| Anomalies | none |
+| What this proves | Baseline regression — the original happy path from before the multi-backend / multi-TTS work still works. |
+
+### Notation for adding new runs
+
+When you do a fresh E2E run, add a new "Run #N" section above with at
+least: job id, commit hash you ran against, exact rough points, all
+`BACKEND` / `TTS_ENGINE` env vars set, wall-clock, output path + size
++ duration, codec line from `ffprobe`, and any anomalies (with their
+recovery). Falsifiable claims only — avoid "looked good." Update the
+coverage matrix at the top.
+
+If a run crashed or stalled, record it anyway. A failed run with
+"crash at stage X, recovered via Y" is more valuable than a missing
+row.
+
+---
+
+## 5. User Acceptance Testing checklist
 
 Run through this before merging any change that touches the pipeline,
 prompts, or the slide-design HTML. It takes ~5 minutes if everything
@@ -251,7 +355,7 @@ works.
 
 ---
 
-## 5. Bug-reporting workflow
+## 6. Bug-reporting workflow
 
 ### Before you file
 
