@@ -73,7 +73,11 @@ JOBS_DIR = ROOT / "jobs"
 JOBS_DIR.mkdir(exist_ok=True)
 
 VIDEO_W, VIDEO_H = 1920, 1080
-CLAUDE_TIMEOUT_S = 240
+# Per-call patience for the LLM. Reasoning models (DeepSeek-R1, QwQ) can
+# "think" for several minutes on a single call, so the default is generous.
+# Override with LLM_TIMEOUT_S=<seconds> if you use an especially slow model
+# (or a fast one and want to fail quicker).
+CLAUDE_TIMEOUT_S = int(os.environ.get("LLM_TIMEOUT_S", "600"))   # 10 minutes
 SPEAKING_WPM = 160          # how fast we assume the user will read
 MIN_SLIDE_SECONDS = 4.0     # minimum length for a single cue slide
 SLIDE_TAIL_PAD_S = 1.0      # quiet padding at the end of each slide

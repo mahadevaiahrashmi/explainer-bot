@@ -151,6 +151,21 @@
     margin-left: auto; color: var(--muted); font-size: 12px;
   }
   .model-picker .badge code { background: var(--bg); padding: 2px 6px; border-radius: 4px; }
+  /* Indeterminate progress bar shown during synchronous LLM calls. */
+  .progress-bar {
+    height: 4px; background: var(--panel-2); border-radius: 2px;
+    overflow: hidden; margin-top: 8px; display: none; position: relative;
+  }
+  .progress-bar.active { display: block; }
+  .progress-bar .fill {
+    position: absolute; height: 100%; width: 30%; border-radius: 2px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    animation: indeterminate 1.3s infinite ease-in-out;
+  }
+  @keyframes indeterminate {
+    0%   { left: -30%; }
+    100% { left: 100%; }
+  }
 </style>
 </head>
 <body>
@@ -196,6 +211,7 @@
       <button id="btn-script">Draft script</button>
       <span class="muted" id="input-hint">Claude will write a narration, pick a slide aesthetic, and critique its own work (~30–60s).</span>
     </div>
+    <div class="progress-bar" id="script-progress"><div class="fill"></div></div>
   </div>
 
   <!-- Stage 2: review script -->
@@ -221,6 +237,7 @@
       <button id="btn-design">Approve script → design slides</button>
       <span class="muted" id="design-hint">Claude will write standalone HTML for each slide (~30–60s). You can edit any slide before the cue video is built.</span>
     </div>
+    <div class="progress-bar" id="design-progress"><div class="fill"></div></div>
   </section>
 
   <!-- Stage 2.5: review / edit slide HTML -->
@@ -259,6 +276,7 @@ e.g. The second label is unreadable on the dark background." style="min-height:9
               <button class="secondary" id="btn-fix-cancel">Cancel</button>
               <span class="muted" id="fix-status"></span>
             </div>
+            <div class="progress-bar" id="fix-progress"><div class="fill"></div></div>
           </div>
         </div>
         <div class="slide-preview">
@@ -359,6 +377,30 @@ let JOB_ID = null;
 let SLIDES = [];    // [{index, title, html, savedHtml, dirty, pngStale}]
 let CURRENT_SLIDE = 0;
 
+// ---- progress bar for synchronous LLM calls -----------------------------
+// We can't stream token-level progress from the CLI/HTTP backends, so this
+// is an indeterminate animated bar plus a live elapsed-time clock in the
+// hint text. For reasoning models (DeepSeek-R1, QwQ) a call can take
+// minutes — the clock reassures the user it's working, not frozen.
+function startProgress(barSel, hintSel, label) {
+  const bar = $(barSel), hint = $(hintSel);
+  const t0 = Date.now();
+  bar.classList.add("active");
+  const fmt = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  const render = () => {
+    const s = Math.floor((Date.now() - t0) / 1000);
+    hint.textContent = `${label} — ${fmt(s)} elapsed` +
+      (s > 120 ? " (reasoning models can take several minutes)" : "");
+  };
+  render();
+  const tick = setInterval(render, 1000);
+  return (finalMsg) => {
+    clearInterval(tick);
+    bar.classList.remove("active");
+    if (finalMsg !== undefined) hint.textContent = finalMsg;
+  };
+}
+
 // ---- model picker --------------------------------------------------------
 function pickerOverrides() {
   // Whatever is in the picker right now. Empty string -> server default.
@@ -455,7 +497,7 @@ $("#btn-script").addEventListener("click", async () => {
     "/ but the UI will start fresh). Continue?"
   )) return;
   const btn = $("#btn-script"); btn.disabled = true;
-  $("#input-hint").textContent = "Drafting... 30–60s.";
+  const stop = startProgress("#script-progress", "#input-hint", "Drafting script + critique");
   try {
     const res = await fetch("/script", {
       method: "POST", headers: {"Content-Type": "application/json"},
@@ -463,13 +505,14 @@ $("#btn-script").addEventListener("click", async () => {
     });
     if (!res.ok) throw new Error(await res.text());
     SCRIPT = await res.json();
+    stop("");
     renderReview();
     show("stage-review");
   } catch (e) {
+    stop("");
     alert("Script generation failed:\n" + e.message);
   } finally {
     btn.disabled = false;
-    $("#input-hint").textContent = "";
   }
 });
 
@@ -522,8 +565,8 @@ function renderReview() {
 // ----------------------------------------------------------- stage 2.5: slides
 $("#btn-design").addEventListener("click", async () => {
   const btn = $("#btn-design"); btn.disabled = true;
-  const hint = $("#design-hint"); const prev = hint.textContent;
-  hint.textContent = "Designing slides... 30–60s.";
+  const prev = $("#design-hint").textContent;
+  const stop = startProgress("#design-progress", "#design-hint", "Designing slides");
   try {
     const res = await fetch("/design", {
       method: "POST", headers: {"Content-Type": "application/json"},
@@ -551,11 +594,12 @@ $("#btn-design").addEventListener("click", async () => {
     show("stage-slides");
     // After the stage becomes visible the wrapper has real width — rescale.
     requestAnimationFrame(rescalePreview);
+    stop(prev);
   } catch (e) {
+    stop(prev);
     alert("Slide design failed:\n" + e.message);
   } finally {
     btn.disabled = false;
-    hint.textContent = prev;
   }
 });
 
@@ -668,7 +712,7 @@ $("#btn-fix").addEventListener("click", async () => {
   }
 
   const btn = $("#btn-fix"); btn.disabled = true;
-  $("#fix-status").textContent = "Asking bot to fix... ~20–40s.";
+  const stop = startProgress("#fix-progress", "#fix-status", "Asking bot to fix this slide");
   try {
     const r = await fetch(`/jobs/${JOB_ID}/slide/${CURRENT_SLIDE}/fix`, {
       method: "POST", headers: {"Content-Type": "application/json"},
@@ -683,11 +727,11 @@ $("#btn-fix").addEventListener("click", async () => {
     $("#slide-saved").textContent = "";
     $("#slide-png-link").href = `/jobs/${JOB_ID}/slide/${CURRENT_SLIDE}/png?t=${Date.now()}`;
     $("#slide-png-stale").style.display = "none";
-    $("#fix-status").textContent = "Fixed and re-rendered. Review the preview.";
+    stop("Fixed and re-rendered. Review the preview.");
     $("#fix-issue").value = "";
     renderSlideTabs();
   } catch (e) {
-    $("#fix-status").textContent = "Fix failed: " + e.message;
+    stop("Fix failed: " + e.message);
   } finally {
     btn.disabled = false;
   }
