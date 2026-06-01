@@ -291,6 +291,25 @@ So you can, for example, generate slides with Claude (the default LLM)
 and have them narrated by Piper without restarting the server: just
 pick `piper` from the TTS dropdown before clicking "Auto-narrate".
 
+**Model dropdown.** The Model field is a type-to-filter dropdown
+populated from whatever the picked backend actually offers:
+
+- Pick **`llm`** as the backend → the Model field suggests every model
+  the `llm` CLI knows about, including all your OpenRouter models
+  (`openrouter/qwen/…`, `openrouter/deepseek/…`), Anthropic, OpenAI,
+  Gemini, DeepSeek, etc. Type `qwen` or `deepseek` to filter. With
+  OpenRouter installed you'll see hundreds — the type-to-filter keeps
+  that manageable.
+- Pick **`ollama`** → the Model field suggests the models you've pulled
+  locally (`ollama list`).
+- Pick a subscription CLI (`claude_cli` / `codex_cli` / `gemini_cli`)
+  → the Model field clears, because those backends use whatever model
+  your subscription is configured for.
+
+The field is still free-text, so you can type a model that isn't in
+the suggestions (e.g. a brand-new OpenRouter route) and it'll be used
+as-is.
+
 ### Starting and stopping the server
 
 **Web server only (auto-detect backend):**

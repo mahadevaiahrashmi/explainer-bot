@@ -172,7 +172,11 @@
       <option value="llm">llm — cloud key (any provider via the `llm` CLI)</option>
     </select>
     <label for="picker-model">Model:</label>
-    <input id="picker-model" type="text" placeholder="e.g. claude-sonnet-4-5, llama3.2, gpt-4.1" />
+    <input id="picker-model" type="text" list="model-options"
+           placeholder="e.g. claude-sonnet-4-5, llama3.2, gpt-4.1"
+           autocomplete="off" />
+    <datalist id="model-options"></datalist>
+    <span class="muted" id="model-count" style="font-size:11px;"></span>
     <label for="picker-tts" title="Used by auto-narrate; ignored if you record your own audio">TTS:</label>
     <select id="picker-tts">
       <option value="">(server default)</option>
@@ -398,6 +402,47 @@ async function refreshBackendBadge() {
   }
 }
 refreshBackendBadge();
+
+// ---- model dropdown (datalist) -------------------------------------------
+// Populate the model <datalist> from whatever the picked backend offers.
+// For `llm` this includes OpenRouter / Anthropic / OpenAI / DeepSeek / ...
+// For `ollama` it's the models pulled locally. CLI-subscription backends
+// have no model to pick, so the list is cleared.
+async function refreshModelOptions() {
+  const backend = $("#picker-backend").value;
+  const dl = $("#model-options");
+  const count = $("#model-count");
+  // Which backend's models to list: the explicit pick, or — if "(server
+  // default)" — ask the server what its default resolves to.
+  let target = backend;
+  if (!target) {
+    try {
+      const j = await (await fetch("/backend")).json();
+      target = j.backend || "";
+    } catch (e) { target = ""; }
+  }
+  if (target !== "llm" && target !== "ollama") {
+    dl.innerHTML = "";
+    count.textContent = "";
+    return;
+  }
+  count.textContent = "loading models…";
+  try {
+    const j = await (await fetch(`/models?backend=${encodeURIComponent(target)}`)).json();
+    const models = j.models || [];
+    dl.innerHTML = models.map(m => `<option value="${m.replace(/"/g, "&quot;")}"></option>`).join("");
+    count.textContent = models.length
+      ? `${models.length} ${target} models — type to filter`
+      : (target === "ollama"
+          ? "no Ollama models pulled (run `ollama pull …`)"
+          : "no llm models (install a plugin + set a key)");
+  } catch (e) {
+    dl.innerHTML = "";
+    count.textContent = "couldn't load models";
+  }
+}
+$("#picker-backend").addEventListener("change", refreshModelOptions);
+refreshModelOptions();
 
 // ------------------------------------------------------------------ stage 1
 $("#btn-script").addEventListener("click", async () => {

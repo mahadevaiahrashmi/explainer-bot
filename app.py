@@ -30,6 +30,7 @@ from pipeline import (
     find_audio_for_slide,
     fix_slide,
     get_slide_html,
+    list_models_for_backend,
     screenshot_slides,
     set_request_overrides,
     update_slide_html,
@@ -92,6 +93,24 @@ async def get_backend_info() -> dict[str, Any]:
     except Exception as e:
         info = {"backend": None, "model": None, "source": "error", "error": str(e)}
     return {**info, "valid_backends": list(VALID_BACKENDS)}
+
+
+@app.get("/models")
+async def get_models(backend: str = "llm") -> dict[str, Any]:
+    """List the model ids selectable for a given backend, so the UI can
+    offer a dropdown instead of a free-text box.
+
+    - `llm`    → every model the `llm` CLI knows about (incl. OpenRouter,
+                 Anthropic, OpenAI, Gemini, DeepSeek, … per installed plugins)
+    - `ollama` → models currently pulled into the local Ollama daemon
+    - claude_cli / codex_cli / gemini_cli → [] (model fixed by subscription)
+    """
+    try:
+        models = await asyncio.to_thread(list_models_for_backend, backend)
+    except Exception as e:
+        traceback.print_exc()
+        return {"backend": backend, "models": [], "error": str(e)}
+    return {"backend": backend, "models": models}
 
 
 @app.post("/script")

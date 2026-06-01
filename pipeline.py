@@ -195,6 +195,63 @@ def get_backend() -> str:
     return _BACKEND_CACHE
 
 
+def list_ollama_models() -> list[str]:
+    """Names of models currently pulled into the local Ollama daemon.
+    Empty list if Ollama isn't running."""
+    url = os.environ.get("OLLAMA_URL", DEFAULT_OLLAMA_URL)
+    try:
+        with httpx.Client(timeout=2.0) as client:
+            r = client.get(f"{url}/api/tags")
+            r.raise_for_status()
+            return sorted(m["name"] for m in r.json().get("models", []))
+    except Exception:
+        return []
+
+
+def list_llm_models() -> list[str]:
+    """Model ids the `llm` CLI knows about across all installed plugins.
+
+    This includes OpenRouter models (openrouter/...), Anthropic, OpenAI,
+    Gemini, DeepSeek, etc. — whatever plugins + keys are configured.
+    Parses the `llm models` output, which looks like:
+        OpenRouter: openrouter/qwen/qwen-2.5-72b-instruct
+        Anthropic Messages: anthropic/claude-3-5-sonnet-latest (aliases: ...)
+    """
+    try:
+        exe = _llm_executable()
+    except RuntimeError:
+        return []
+    try:
+        out = subprocess.run(
+            [exe, "models"], capture_output=True, text=True, timeout=20,
+        )
+    except Exception:
+        return []
+    models: list[str] = []
+    for line in out.stdout.splitlines():
+        line = line.strip()
+        if ":" not in line:
+            continue
+        # Everything after the first ":" is "<model-id> (aliases: ...)".
+        after = line.split(":", 1)[1].strip()
+        model_id = after.split(" ", 1)[0].strip()
+        if model_id:
+            models.append(model_id)
+    return sorted(set(models))
+
+
+def list_models_for_backend(backend: str) -> list[str]:
+    """Dispatch to the right model lister. CLI-subscription backends
+    (claude_cli / codex_cli / gemini_cli) return [] — their model is
+    fixed by the subscription, not picked here."""
+    b = (backend or "").lower().strip()
+    if b == "ollama":
+        return list_ollama_models()
+    if b == "llm":
+        return list_llm_models()
+    return []
+
+
 async def llm_call(system_prompt: str, user_message: str) -> str:
     """Dispatch to the chosen backend. Returns the model's raw text reply.
 

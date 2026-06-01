@@ -198,6 +198,33 @@ class TestRoot:
         assert "<html" in r.text.lower() or "<!doctype" in r.text.lower()
 
 
+class TestModels:
+    def test_models_for_cli_backend_is_empty(self, client, monkeypatch):
+        # claude_cli / codex_cli / gemini_cli pick no model.
+        r = client.get("/models?backend=claude_cli")
+        assert r.status_code == 200
+        assert r.json() == {"backend": "claude_cli", "models": []}
+
+    def test_models_for_llm_lists_them(self, client, monkeypatch):
+        import pipeline
+        monkeypatch.setattr(pipeline, "list_llm_models",
+                            lambda: ["openrouter/deepseek/deepseek-chat",
+                                     "openrouter/qwen/qwen-2.5-72b-instruct"])
+        r = client.get("/models?backend=llm")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["backend"] == "llm"
+        assert "openrouter/qwen/qwen-2.5-72b-instruct" in body["models"]
+
+    def test_models_for_ollama(self, client, monkeypatch):
+        import pipeline
+        monkeypatch.setattr(pipeline, "list_ollama_models",
+                            lambda: ["llama3.2:latest", "qwen2.5:14b"])
+        r = client.get("/models?backend=ollama")
+        assert r.status_code == 200
+        assert "qwen2.5:14b" in r.json()["models"]
+
+
 class TestBackend:
     def test_get_backend(self, client):
         r = client.get("/backend")
