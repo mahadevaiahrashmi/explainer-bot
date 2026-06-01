@@ -1254,14 +1254,16 @@ SAY_VOICE = "Samantha"
 SAY_RATE_WPM = 175
 
 # TTS engines for auto_narrate. Pick with TTS_ENGINE env var.
-#   say     — macOS built-in. Free, no setup. Default. Robotic but reliable.
-#   piper   — open-source neural TTS (Hugging Face piper-tts). Much higher
-#             quality than `say` but needs a Python install + a voice file
-#             download. Free and fully offline once set up. ✨ recommended.
-#   espeak  — eSpeak-NG fallback. Truly free, available on every OS, very
-#             robotic. Useful when piper isn't an option (e.g. Linux without
-#             Python) and macOS `say` isn't available either.
-VALID_TTS_ENGINES = ("say", "piper", "espeak")
+#   say         — macOS built-in. Free, no setup. Default. Robotic but reliable.
+#   piper       — open-source neural TTS (Hugging Face piper-tts). Higher quality
+#                 than `say` but needs a Python install + a voice file download.
+#                 Free and fully offline once set up.
+#   supertonic  — open-source on-device TTS (Supertone). Pip-installable; the
+#                 SDK auto-downloads its ONNX models (~260MB) on first use.
+#                 Free and fully offline. Often the best-sounding free option. ✨
+#   espeak      — eSpeak-NG fallback. Truly free, available on every OS, very
+#                 robotic. Useful when nothing else is an option.
+VALID_TTS_ENGINES = ("say", "piper", "supertonic", "espeak")
 
 
 def find_audio_for_slide(audio_dir: Path, index: int) -> Path | None:
@@ -1343,6 +1345,53 @@ def _synthesize_piper(text: str, out_path: Path) -> None:
     )
 
 
+_SUPERTONIC_TTS = None  # lazy module-level singleton to amortize ~260MB model load
+
+
+def _synthesize_supertonic(text: str, out_path: Path) -> None:
+    """Open-source Supertonic neural TTS → 44.1 kHz WAV.
+
+    Uses the `supertonic` pip package; auto-downloads its ONNX models from
+    Hugging Face on first use (~260 MB cached). No API key, no internet
+    after that. Voice picked by SUPERTONIC_VOICE env var (default ``M4``);
+    language by SUPERTONIC_LANG (default ``en``).
+    """
+    try:
+        from supertonic import TTS  # type: ignore  # noqa: I001
+    except ImportError as e:
+        raise RuntimeError(
+            "supertonic not installed. Install with one of:\n"
+            "  uv add supertonic                      (adds to this project's venv)\n"
+            "  pipx install supertonic                (isolated global)\n"
+            "  pip install supertonic                 (any venv)\n"
+            "First run will auto-download ~260 MB of ONNX models from Hugging "
+            "Face into your local HF cache; subsequent runs are fully offline.\n"
+            f"(original error: {e})"
+        )
+    global _SUPERTONIC_TTS
+    if _SUPERTONIC_TTS is None:
+        # auto_download=True fetches the models on first instantiation; after
+        # that they're cached, so subsequent slides in the same process reuse
+        # the in-memory model (which is the slow part to load).
+        _SUPERTONIC_TTS = TTS(auto_download=True)
+
+    voice_name = os.environ.get("SUPERTONIC_VOICE", "M4")
+    lang = os.environ.get("SUPERTONIC_LANG", "en")
+    try:
+        style = _SUPERTONIC_TTS.get_voice_style(voice_name=voice_name)
+    except Exception as e:
+        raise RuntimeError(
+            f"Supertonic voice {voice_name!r} not found ({e}). "
+            f"Try SUPERTONIC_VOICE=M1, M2, M3, M4, F1, F2, … (see "
+            f"https://huggingface.co/Supertone/supertonic-3 for the full list)."
+        )
+    wav, _duration = _SUPERTONIC_TTS.synthesize(
+        text=text, voice_style=style, lang=lang,
+    )
+    out_path = out_path.with_suffix(".wav")
+    _SUPERTONIC_TTS.save_audio(wav, str(out_path))
+
+
 def _synthesize_espeak(text: str, out_path: Path) -> None:
     """Lightweight eSpeak-NG fallback → WAV. Very robotic but works
     on every platform with no setup beyond `brew install espeak-ng`."""
@@ -1371,6 +1420,10 @@ def _synthesize(text: str, out_path_hint: Path) -> Path:
     if engine == "piper":
         out = out_path_hint.with_suffix(".wav")
         _synthesize_piper(text, out)
+        return out
+    if engine == "supertonic":
+        out = out_path_hint.with_suffix(".wav")
+        _synthesize_supertonic(text, out)
         return out
     if engine == "espeak":
         out = out_path_hint.with_suffix(".wav")

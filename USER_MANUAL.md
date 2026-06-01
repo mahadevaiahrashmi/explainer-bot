@@ -601,11 +601,12 @@ When you use **auto-narrate** (the "Auto-narrate missing slides" button,
 or `cli.py --auto-narrate`), the bot picks a TTS engine via the
 `TTS_ENGINE` env var. Three options:
 
-| `TTS_ENGINE=` | Voice quality       | Setup                   | License            |
-| ------------- | ------------------- | ----------------------- | ------------------ |
-| `say` (default) | Decent (macOS built-in) | None — already there  | Proprietary, free  |
-| **`piper`**   | **Very good** — neural | pipx install + 1 file | **Open source** ✨ |
-| `espeak`      | Robotic but clear   | `brew install espeak-ng` | Open source       |
+| `TTS_ENGINE=`    | Voice quality        | Setup                          | License            |
+| ---------------- | -------------------- | ------------------------------ | ------------------ |
+| `say` (default)  | Decent (macOS built-in) | None — already there        | Proprietary, free  |
+| **`piper`**      | Very good — neural   | pipx install + 1 voice file    | **Open source**    |
+| **`supertonic`** | **Very good** — neural | pip install; auto-downloads models on first use | **Open source** ✨ |
+| `espeak`         | Robotic but clear    | `brew install espeak-ng`       | Open source        |
 
 ### Piper (open-source, recommended)
 
@@ -660,6 +661,54 @@ echo "your rough points ." | \
 
 The pipeline writes `slide_NN.wav` (instead of `.aiff` with `say`); the
 finalize step accepts either, so nothing else changes.
+
+### Supertonic (open-source, on-device, auto-setup)
+
+[Supertonic](https://github.com/supertone-inc/supertonic) is another
+open-source neural TTS — and arguably easier to set up than Piper
+because the pip package **auto-downloads its ONNX models** on first use
+(~260 MB cached in your Hugging Face cache). No manual voice-file
+download, no separate CLI install. Quality is generally on par with or
+better than Piper, with a different set of preset voices.
+
+**1. Install the package** (one of):
+
+```bash
+.venv/bin/uv add supertonic           # adds to this project's venv
+# or:
+pipx install supertonic               # isolated, global
+# or:
+.venv/bin/pip install supertonic      # any venv
+```
+
+The first time `_synthesize_supertonic` runs, it'll fetch the ONNX
+models from <https://huggingface.co/Supertone/supertonic-3>. After
+that, audio synthesis is fully offline.
+
+**2. Pick a voice** (optional — defaults to `M4`):
+
+```bash
+export TTS_ENGINE=supertonic
+export SUPERTONIC_VOICE=M4            # preset voice name; M1..M4, F1, F2, ...
+export SUPERTONIC_LANG=en             # language code; "en", "ko", or "na" (language-agnostic)
+```
+
+See the [Supertonic model card](https://huggingface.co/Supertone/supertonic-3)
+for the full voice list and language codes.
+
+**3. Use it:**
+
+```bash
+# CLI one-shot
+echo "your rough points ." | \
+  BACKEND=ollama TTS_ENGINE=supertonic .venv/bin/python cli.py --auto-narrate
+
+# Or the web server, with auto-narrate set to Supertonic by default
+TTS_ENGINE=supertonic .venv/bin/uvicorn app:app --port 8000
+```
+
+In the web UI, the TTS dropdown lists `supertonic` directly — no
+restart needed if the package is already installed.
 
 ### eSpeak-NG (fallback)
 
