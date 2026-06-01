@@ -125,7 +125,8 @@ Depends on the backend you pick:
 ## For technical readers
 
 > **Doc map:**
-> - Install, run, troubleshoot → **[USER_MANUAL.md](USER_MANUAL.md)**.
+> - Friendly walkthrough for non-technical users → **[USER_GUIDE.md](USER_GUIDE.md)**.
+> - Install, run, configure backends, troubleshoot → **[USER_MANUAL.md](USER_MANUAL.md)**.
 > - Problem, personas, requirements, success metrics → **[PRD.md](PRD.md)**.
 > - UX flows, screens, design system, copy guidelines → **[PRODUCT_DESIGN.md](PRODUCT_DESIGN.md)**.
 > - Architectural reference (components, API contracts, sequence
