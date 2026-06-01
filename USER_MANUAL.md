@@ -421,6 +421,26 @@ What is recursion?
 That's it. The final `.` on its own line is only needed when piping
 via `cli.py --auto-narrate`; in the web UI you just click the button.
 
+### Even shorter — input can be as little as 4 words
+
+You don't even need bullets. A bare topic phrase works — the writer
+fills in everything from its prompt's defaults (1st-year CS undergrad
+audience, 3Blue1Brown style, curious tone). Try this:
+
+```
+vedic maths for square root
+.
+```
+
+Four words. The bot will: pick its own slide aesthetic, decide on
+~4–6 segments covering the technique, write narration, and design
+slides. Useful when you want to *see* what the bot would do before
+spending effort on directives.
+
+The tradeoff: with less input you get less control over the angle
+and analogies the writer chooses. For polished videos, bullets +
+directives are worth the extra typing.
+
 ### Optional directives (recommended for serious videos)
 
 You can put a labelled header *before* your rough points to control
@@ -453,8 +473,10 @@ TONE: playful but rigorous; the math is real, but we never hide
   behind it
 PERSONA: a friendly grad-student TA who's slightly nerdy and gets
   visibly excited when an idea lands
-HUMOUR: occasional dry asides ("Mathematicians named this thing in
-  the worst possible way"), never forced
+HUMOUR: Samay Raina style — deadpan, dry, occasional self-aware jab
+  at math itself ("Mathematicians named this thing in the worst
+  possible way"). Never forced; if it's not funny, just say the
+  thing. No laugh-tracks, no exclamation marks.
 LANGUAGE: English; one mechanical-engineering analogy, one cooking
   analogy if it fits
 STYLE: 3Blue1Brown — restrained, animated when it matters, never
@@ -489,6 +511,76 @@ ROUGH POINTS:
   field would still be in the 1980s
 .
 ```
+
+### Same example, in Hindi/Hinglish
+
+Same topic, same 8 bullets — but in the register a Hindi-speaking
+Indian undergrad would actually find natural (Hindi base with English
+technical terms left in place). The only directive that really changes
+is `LANGUAGE`; everything else stays — the writer + critic prompts
+are language-agnostic.
+
+```
+TOPIC: Neural network में backpropagation actually कैसे काम करता है?
+
+AUDIENCE: एक 2nd-year CS undergrad (Indian college में) — Python आता
+  है, basic calculus भी, लेकिन chain rule को 6 महीने हो गए
+TONE: friendly और थोड़ा informal — जैसे senior whiteboard पर समझा रहा
+  हो; math को छिपाना नहीं है, लेकिन डराना भी नहीं है
+PERSONA: एक helpful senior या TA जो थोड़ा nerdy है और किसी idea पर
+  excited हो जाता है
+HUMOUR: occasional dry asides ("Mathematicians ने इसका worst possible
+  नाम रखा है"), forced नहीं
+LANGUAGE: Hindi with English technical terms (Hinglish). Technical
+  शब्द जैसे "gradient", "loss", "weight", "layer" English ही रहेंगे —
+  वो textbook में वैसे ही हैं, translate करने से confusion बढ़ेगा।
+  Output: Devanagari script में Hindi + Roman script में English terms.
+STYLE: 3Blue1Brown — restrained, animated when it matters, never busy.
+  एक slide पर एक focal idea।
+COLOR THEME: dark navy background (#0e1a2b), soft white text, blue-teal
+  #4dd0e1 for the network diagram, soft yellow #ffd54f to highlight the
+  active edge during backprop
+SIMPLICITY: undergrad-friendly. मान लेना कि derivative READ करना आता है
+  but DERIVE quickly नहीं कर सकते। Jargon को पहली बार आते ही define
+  करना। `∇` या "nabla" use मत करना — सीधे "gradient" शब्द काफ़ी है।
+
+ROUGH POINTS:
+- problem यह है: एक neural network में हज़ारों से लेकर अरबों "knobs"
+  होते हैं (weights और biases) — इन सबको एक साथ tune कैसे करें?
+- naïve idea: हर knob को एक-एक करके try करें → impossible है, छोटे
+  network में भी
+- gradient descent का असली idea: हर knob को थोड़ा सा उस direction में
+  सरकाओ जो error कम करे। But "नीचे" किधर है, यह कैसे पता चले?
+- gradient चाहिए — और hard part यह है: एक knob जो 50 layers deep है,
+  वो FINAL loss को कितना affect करता है?
+- answer: chain rule of calculus, उल्टी direction में लगाओ — output
+  forward compute करो, फिर layer-by-layer पीछे चलते हुए local
+  gradients को multiply करते जाओ। यही "backward pass" है।
+- analogy: network एक Rube Goldberg machine की तरह है — backprop हर
+  component से पूछता है "अगर मैं तुझे थोड़ा tweak करूँ, तो final
+  ball-drop position कितनी move होगी?"
+- punchline: एक forward pass output निकालने के लिए, एक backward pass
+  सारे gradients एक साथ निकाल देता है — दोनों O(N), O(N²) नहीं।
+- यही reason है deep learning actually काम क्यों करता है — backprop
+  के बिना एक छोटा network train करना भी impractical होता, और पूरा
+  field अभी भी 1980s में अटका होता।
+.
+```
+
+A few tips when writing rough points in Hindi (or any other language):
+
+- **Keep technical terms in English** if your audience reads CS in
+  English textbooks. "Backpropagation" in Devanagari (बैकप्रोपेगेशन)
+  looks scholarly but a working CS student is more likely to know the
+  English word.
+- **Be explicit in the `LANGUAGE` directive** about which script(s)
+  the output should use. Without it, the writer often hedges and
+  produces awkward transliteration.
+- **The critic prompt still scores on understandability, analogies,
+  and wonder** — those land in any language. If a Hindi script comes
+  back stilted, it usually means the analogies didn't translate; the
+  fix is to provide better analogies in your rough points, not to
+  tweak the prompt.
 
 ### What actually happens to each directive
 
