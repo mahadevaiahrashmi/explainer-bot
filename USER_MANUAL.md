@@ -165,6 +165,29 @@ brew services stop ollama       # stop the daemon
 brew services start ollama      # start it again (or after reboot, it's already on)
 ```
 
+#### Other Ollama models worth trying
+
+The `ollama` backend works with **any model** in
+<https://ollama.com/library>. Just `ollama pull <model-name>` and set
+`OLLAMA_MODEL=` to that name — no code changes. A short list of models
+that are particularly good fits for this app:
+
+| Model                  | Pull command                  | Size  | Why try it                                                                                               |
+| ---------------------- | ----------------------------- | ----- | -------------------------------------------------------------------------------------------------------- |
+| `qwen2.5:14b`          | `ollama pull qwen2.5:14b`     | 8.5 GB | The sweet spot on a 16 GB-RAM laptop. Better JSON-schema discipline than `llama3.2`; meaningfully better slide HTML. ✨ |
+| `qwen2.5:32b`          | `ollama pull qwen2.5:32b`     | 19 GB | Top Qwen for slide design if your machine has the RAM.                                                   |
+| `qwq:32b`              | `ollama pull qwq:32b`         | 19 GB | Qwen's reasoning model. Outputs a `<think>…</think>` block before its answer; the defensive JSON parser strips it. Better narration on tricky topics; slower per call. |
+| `deepseek-r1:14b`      | `ollama pull deepseek-r1:14b` | 9 GB  | DeepSeek's reasoning model — same `<think>` pattern as QwQ. Often produces sharper analogies than Qwen of the same size. |
+| `deepseek-r1:32b`      | `ollama pull deepseek-r1:32b` | 19 GB | Best free local quality, if your machine can hold it.                                                    |
+| `llama3.3:70b`         | `ollama pull llama3.3:70b`    | 40 GB | Best free local quality from Meta. Needs 64 GB+ RAM.                                                     |
+
+> Heads-up on reasoning models (`qwq`, `deepseek-r1`): they output
+> their reasoning inside `<think>…</think>` tags before the actual
+> answer. Our defensive JSON parser locates the first balanced `{` or
+> `[` outside the thinking block, so they work — but if you see a
+> slide come back malformed, the reasoning block is the prime suspect.
+> Verify by checking the raw model output (see SYSTEM_DESIGN §8).
+
 ### Backend 5 — `llm` (cloud API key — Anthropic / OpenAI / Gemini / …)
 
 The `llm` CLI is already in our dependencies. Pick a provider and set its
@@ -186,6 +209,31 @@ export LLM_MODEL=claude-sonnet-4-5           # Anthropic
 `.venv/bin/llm models` lists every model your installed plugins know
 about. Cost depends on the provider's pricing per token. Quality:
 Claude-Sonnet ≥ GPT-4.1 ≈ Gemini-2.0 for this task.
+
+#### Other providers — install a plugin
+
+The `llm` CLI is provider-agnostic — install a plugin for whichever
+provider you have a key for. A short list relevant to this app:
+
+```bash
+.venv/bin/llm install llm-deepseek      # DeepSeek's own API (~$0.01 / video)
+.venv/bin/llm keys set deepseek
+export LLM_MODEL=deepseek-chat          # or deepseek-reasoner (R1)
+
+.venv/bin/llm install llm-openrouter    # ONE key, hundreds of models
+.venv/bin/llm keys set openrouter        # https://openrouter.ai
+export LLM_MODEL=deepseek/deepseek-r1            # or
+export LLM_MODEL=qwen/qwen-2.5-72b-instruct
+export LLM_MODEL=deepseek/deepseek-r1:free       # free tier, rate-limited
+
+.venv/bin/llm install llm-dashscope     # Qwen via Alibaba's API
+.venv/bin/llm keys set dashscope
+export LLM_MODEL=qwen-plus              # or qwen-max for top quality
+```
+
+After installing a plugin, `.venv/bin/llm models` shows every model
+the plugin knows about. OpenRouter is the most convenient if you want
+to try several different providers without managing multiple keys.
 
 ---
 
