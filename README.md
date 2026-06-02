@@ -125,7 +125,8 @@ Depends on the backend you pick:
 ## For technical readers
 
 > **Doc map:**
-> - Step-by-step install from a fresh clone → **[SETUP.md](SETUP.md)**.
+> - Quick start — clone to running server in 4 steps → **[RUN_LOCALLY.md](RUN_LOCALLY.md)**.
+> - Step-by-step install from a fresh clone (with checkpoints) → **[SETUP.md](SETUP.md)**.
 > - Friendly walkthrough for non-technical users → **[USER_GUIDE.md](USER_GUIDE.md)**.
 > - Use, configure backends, troubleshoot → **[USER_MANUAL.md](USER_MANUAL.md)**.
 > - Problem, personas, requirements, success metrics → **[PRD.md](PRD.md)**.
