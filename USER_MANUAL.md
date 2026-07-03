@@ -758,7 +758,7 @@ instead.
 
 When you use **auto-narrate** (the "Auto-narrate missing slides" button,
 or `cli.py --auto-narrate`), the bot picks a TTS engine via the
-`TTS_ENGINE` env var. Three options:
+`TTS_ENGINE` env var. Five options:
 
 | `TTS_ENGINE=`    | Voice quality        | Setup                          | License            |
 | ---------------- | -------------------- | ------------------------------ | ------------------ |
@@ -766,6 +766,7 @@ or `cli.py --auto-narrate`), the bot picks a TTS engine via the
 | **`piper`**      | Very good — neural   | pipx install + 1 voice file    | **Open source**    |
 | **`supertonic`** | **Very good** — neural | pip install; auto-downloads models on first use | **Open source** ✨ |
 | `espeak`         | Robotic but clear    | `brew install espeak-ng`       | Open source        |
+| `elevenlabs`     | **Excellent** — most expressive | Free account + API key | Proprietary, **paid** (free tier ~2 videos/mo) |
 
 ### Piper (open-source, recommended)
 
@@ -884,6 +885,47 @@ export TTS_ENGINE=espeak
 The voice is markedly robotic — useful as a sanity-check fallback, not
 for a polished video.
 
+### ElevenLabs (cloud, premium)
+
+[ElevenLabs](https://elevenlabs.io) has the most expressive voices of any
+option here — the gap over Piper / Supertonic shows up most on longer
+slides where a flat neural voice starts to drone. It's a paid cloud API,
+but the free tier (~10 k characters/month) covers roughly **two videos**
+before you need a plan.
+
+**1. Get an API key:**
+
+- Create a free account at <https://elevenlabs.io>.
+- Open <https://elevenlabs.io/app/settings/api-keys> and copy a key.
+
+```bash
+export ELEVENLABS_API_KEY=sk_...     # your key
+export TTS_ENGINE=elevenlabs
+```
+
+**2. Pick a voice** (optional — defaults to `Rachel`):
+
+```bash
+# Browse voices at https://elevenlabs.io/app/voice-library, copy a Voice ID
+export ELEVENLABS_VOICE_ID=21m00Tcm4TlvDq8ikWAM   # default: Rachel
+export ELEVENLABS_MODEL=eleven_turbo_v2_5         # default; good quality/latency
+```
+
+**3. Use it:**
+
+```bash
+# CLI one-shot
+echo "your rough points ." | \
+  BACKEND=claude_cli TTS_ENGINE=elevenlabs .venv/bin/python cli.py --auto-narrate
+
+# Or the web server — the TTS dropdown lists `elevenlabs` directly
+TTS_ENGINE=elevenlabs .venv/bin/uvicorn app:app --port 8000
+```
+
+The pipeline writes `slide_NN.mp3`; the finalize step accepts MP3, so
+nothing else changes. If the key is missing or the API rejects the
+request, the error message tells you exactly what to fix.
+
 ### Switching engines
 
 Set the env var when starting the server (or use the CLI):
@@ -917,3 +959,11 @@ Where those calls hit, and what they cost, depends on the backend:
   Gemini / …) at their token pricing. ~$0.02–$0.05 per video on
   Claude Sonnet at current prices; Gemini's free tier covers casual
   use.
+
+**Voice (TTS) cost** is separate from the LLM cost above, and every
+engine except `elevenlabs` is free:
+
+| `TTS_ENGINE=`             | Per-video cost                                             |
+| ------------------------- | --------------------------------------------------------- |
+| `say` / `piper` / `supertonic` / `espeak` | $0 — local or built-in                    |
+| `elevenlabs`              | ~$0.05–$0.10 (≈5 k chars/video); free tier ~10 k chars/month covers ~2 videos |

@@ -236,7 +236,7 @@ class TestBackend:
         ]
         # TTS fields now part of the contract too.
         assert "tts_engine" in j and j["tts_engine"] in (
-            "say", "piper", "supertonic", "espeak",
+            "say", "piper", "supertonic", "espeak", "elevenlabs",
         )
         assert "tts_source" in j
 

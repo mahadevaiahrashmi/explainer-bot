@@ -1324,7 +1324,10 @@ SAY_RATE_WPM = 175
 #                 Free and fully offline. Often the best-sounding free option. ✨
 #   espeak      — eSpeak-NG fallback. Truly free, available on every OS, very
 #                 robotic. Useful when nothing else is an option.
-VALID_TTS_ENGINES = ("say", "piper", "supertonic", "espeak")
+#   elevenlabs  — ElevenLabs cloud TTS. The most expressive voices, best for
+#                 sustained narration, but paid (free tier ~10k chars/month
+#                 ≈ 2 videos). Needs ELEVENLABS_API_KEY. Writes MP3.
+VALID_TTS_ENGINES = ("say", "piper", "supertonic", "espeak", "elevenlabs")
 
 
 def find_audio_for_slide(audio_dir: Path, index: int) -> Path | None:
@@ -1470,6 +1473,37 @@ def _synthesize_espeak(text: str, out_path: Path) -> None:
     )
 
 
+def _synthesize_elevenlabs(text: str, out_path: Path) -> None:
+    """ElevenLabs cloud TTS → MP3. The most expressive option, best for
+    sustained narration, but paid. Auth via ELEVENLABS_API_KEY (free tier
+    ~10k chars/month covers ~2 videos). Voice picked by ELEVENLABS_VOICE_ID
+    (default ``Rachel``); model by ELEVENLABS_MODEL (default
+    ``eleven_turbo_v2_5``). Browse voices at
+    https://elevenlabs.io/app/voice-library."""
+    api_key = os.environ.get("ELEVENLABS_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "ELEVENLABS_API_KEY not set. Create a free account, then get a key "
+            "at https://elevenlabs.io/app/settings/api-keys and "
+            "`export ELEVENLABS_API_KEY=...`"
+        )
+    voice_id = os.environ.get(
+        "ELEVENLABS_VOICE_ID",
+        "21m00Tcm4TlvDq8ikWAM",   # default: Rachel
+    )
+    model_id = os.environ.get("ELEVENLABS_MODEL", "eleven_turbo_v2_5")
+    out_path = out_path.with_suffix(".mp3")
+    with httpx.Client(timeout=LLM_TIMEOUT_S) as client:
+        r = client.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+            headers={"xi-api-key": api_key, "accept": "audio/mpeg"},
+            json={"text": text, "model_id": model_id},
+        )
+    if r.status_code != 200:
+        raise RuntimeError(f"ElevenLabs API {r.status_code}: {r.text[:500]}")
+    out_path.write_bytes(r.content)
+
+
 def _synthesize(text: str, out_path_hint: Path) -> Path:
     """Dispatch to the configured TTS engine. Returns the actually-written
     path (the extension may differ from `out_path_hint` based on engine)."""
@@ -1489,6 +1523,10 @@ def _synthesize(text: str, out_path_hint: Path) -> Path:
     if engine == "espeak":
         out = out_path_hint.with_suffix(".wav")
         _synthesize_espeak(text, out)
+        return out
+    if engine == "elevenlabs":
+        out = out_path_hint.with_suffix(".mp3")
+        _synthesize_elevenlabs(text, out)
         return out
     raise RuntimeError(f"unreachable: engine {engine!r}")
 

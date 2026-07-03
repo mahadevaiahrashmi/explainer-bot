@@ -377,7 +377,7 @@ class TestBackends:
 
 class TestTtsOverride:
     def test_each_valid_engine_accepted(self):
-        for e in ("say", "piper", "supertonic", "espeak"):
+        for e in ("say", "piper", "supertonic", "espeak", "elevenlabs"):
             set_request_overrides(tts_engine=e)
         set_request_overrides(tts_engine=None)  # reset
 
@@ -391,7 +391,7 @@ class TestTtsOverride:
         assert _resolve_tts_engine() == "supertonic"
         set_request_overrides(tts_engine=None)  # reset
         # Now back to env default (say if no env var set).
-        assert _resolve_tts_engine() in ("say", "piper", "supertonic", "espeak")
+        assert _resolve_tts_engine() in ("say", "piper", "supertonic", "espeak", "elevenlabs")
 
 
 # ─── _combined_prompt (used by codex_cli + gemini_cli) ────────────────────────
